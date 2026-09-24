@@ -14,7 +14,7 @@ import os
 
 FILES = 'abcdefgh'
 HERE = os.path.dirname(os.path.abspath(__file__))
-SAMPLE_VERSION = 10  # bump when the sample changes, so the editor offers the new version
+SAMPLE_VERSION = 11  # bump when the sample changes, so the editor offers the new version
 OUT = os.path.join(HERE, '..', 'samples', 'fog-of-war.json')
 
 # ---------- chess logic (pseudo-legal moves, no check: Fog of War rules) ----------
@@ -487,9 +487,11 @@ def sequence_section(title, intro, move_line, texts, fogged, prefix):
                     'from': {'id': a['id'], 'side': 'CENTER'}, 'to': {'id': br['id'], 'side': 'TOP'},
                     'gap': [8, 6], 'stroke': GREY, 'strokeWidth': 3, 'dash': '12 7', 'headSize': 16, 'arrow': True}
             row_y = by_ + BRACE_H + 18
-            row = possible_moves_row(pos[k], PLIES[k][:2], gcx, row_y)
+            row, pickd = possible_moves_row(pos[k], PLIES[k][:2], gcx, row_y, WRONG_CHOICE.get(k))
             tb_y = row_y + 72 + 4 + 22 + THOUGHT_GAP
-            tb = thought_board(pos[k + 1], gcx, tb_y, f'{prefix}-thought-{k}')
+            # The thought-out board follows the model's choice, right or wrong.
+            imagined = pos[k + 1] if (pickd[0], pickd[1]) == tuple(PLIES[k][:2]) else apply_move(pos[k], pickd)
+            tb = thought_board(imagined, gcx, tb_y, f'{prefix}-thought-{k}')
             parts = [a, down, br, row]
             if k == 1:
                 # The first thought-out board sits in a thought bubble, thought by a robot on its right.
@@ -526,29 +528,45 @@ def brace(name, x, y):
             'fill': None, 'stroke': GREY, 'detail': GREY, 'strokeWidth': 3, 'paths': [{'role': 'ink', 'd': d}]}
 
 
-def possible_moves_row(before, played, cx, y):
-    """A few of Black's possible moves with their pieces, the move actually played in the middle and
-    a little bigger, and an ellipsis at each end for the moves not shown."""
+CORRECT = {'white': {'fill': WHITE, 'stroke': CHAR, 'detail': CHAR},
+           'black': {'fill': '#16A34A', 'stroke': '#14532D', 'detail': '#DCFCE7'}}  # the move actually played
+CORRECT_TEXT = '#15803D'
+# Hidden moves where the model samples the wrong move: ply index -> (from, to) of its choice.
+WRONG_CHOICE = {3: ('e7', 'e5')}
+
+
+def apply_move(before, mv):
+    b = dict(before['board'])
+    b[mv[1]] = b.pop(mv[0])
+    return {'board': b, 'vis': set(), 'last': [mv[0], mv[1]], 'side': 'b'}
+
+
+def possible_moves_row(before, played, cx, y, chosen=None):
+    """A few of Black's possible moves with their pieces and an ellipsis at each end for the rest.
+    The move the model chose is in the middle and bigger; the move actually played is green.
+    Returns the row and the chosen move."""
     moves = sorted(pseudo_moves(before['board'], 'b'), key=lambda m: ('KQRBNP'.index(m[2]), m[0], m[1]))
     real = next(m for m in moves if (m[0], m[1]) == tuple(played))
-    others = [m for m in moves if m is not real]
+    pickd = next(m for m in moves if (m[0], m[1]) == tuple(chosen)) if chosen else real
+    others = [m for m in moves if m is not real and m is not pickd]
     pick = [others[round(i * (len(others) - 1) / 3)] for i in range(4)]  # spread across the list
-    shown = pick[:2] + [real] + pick[2:]
+    shown = pick[:2] + [real] + pick[2:] if pickd is real else pick[:2] + [pickd, real] + pick[2:3]
     slot, small, big = 76, 44, 72
     total = len(shown) * slot
     x0 = cx - total / 2
     nodes = [text('More moves', x0 - 30, y + 8, '…', 28, 600, GREY),
              text('More moves', x0 + total + 6, y + 8, '…', 28, 600, GREY)]
     for i, m in enumerate(shown):
-        is_real = m is real
-        size = big if is_real else small
+        is_real, is_chosen = m is real, m is pickd
+        size = big if is_chosen else small
         mx = x0 + i * slot + slot / 2
-        pc = piece('b', m[2], m[1], mx - size / 2, y + (big - size) / 2, size)
-        pc['name'] = ('Played: ' if is_real else 'Possible: ') + san(m, moves)
-        lab = text('Move', mx - slot / 2, y + big + 4, san(m, moves), 17 if is_real else 13, 700 if is_real else 500,
-                   CHAR if is_real else GREY, w=slot, align='center')
+        pc = piece('b', m[2], m[1], mx - size / 2, y + (big - size) / 2, size, CORRECT if is_real else CLASSIC)
+        pc['name'] = ('Chosen' if is_chosen else 'Possible') + (' and correct' if is_real and is_chosen else ' (correct)' if is_real else '') + ': ' + san(m, moves)
+        lab = text('Move', mx - slot / 2, y + big + 4, san(m, moves), 17 if is_chosen else 13,
+                   700 if (is_chosen or is_real) else 500, CORRECT_TEXT if is_real else CHAR if is_chosen else GREY,
+                   w=slot, align='center')
         nodes += [pc, lab]
-    return group(f'Possible moves ({len(moves)} in all)', nodes)
+    return group(f'Possible moves ({len(moves)} in all)', nodes), pickd
 
 
 THOUGHT_S = 34   # square size of the "thought out" board under each played hidden move
