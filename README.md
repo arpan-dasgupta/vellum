@@ -64,3 +64,28 @@ Every node has `id`, `type` and `name`, and uses absolute page coordinates. Node
 - `tools/devserver.py` is the local static server with the export save endpoint.
 
 The browser console exposes `window.vellum` (`doc`, `selection`, `select`, `mutate`, `exportSVG`) for scripting.
+
+## Sample: Fog of War boards
+
+The editor opens with `samples/fog-of-war.json`, a seven-move Fog of War chess game drawn as Vellum layers. The game is `1. e4 Nf6 2. Nc3 d6 3. Bb5 g6 4. Bxe8`, where Black's moves are invisible to White and White ends it by capturing the king.
+
+- **White's view.** Each position exactly as White sees it, with fogged squares where no White piece could move. Under each board, a blue-and-black board shows where every piece really stood.
+- **Real positions.** The same seven moves on classic boards with the fog lifted.
+
+![White's view with the real positions underneath](exports/whites-view-all.png)
+
+![The real positions without fog](exports/real-positions-all.png)
+
+The chess pieces are original vector drawings, so exports look the same on any machine.
+
+### Regenerate the sample
+
+```bash
+python3 tools/build_fow.py
+```
+
+`tools/build_fow.py` plays the moves, works out which squares White can see under Fog of War rules (every pseudo-legal destination, with no check), and writes the document. Bump `SAMPLE_VERSION` when the sample changes; the editor then replaces an autosaved older copy and keeps the old one a single undo away.
+
+### Re-export the images
+
+With the dev server running, open http://127.0.0.1:8765/export.html?preset=fow. It renders each board and both full rows in the browser, then saves SVG and PNG files into `exports/`.

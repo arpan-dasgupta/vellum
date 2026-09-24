@@ -1,0 +1,51 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Vellum batch export</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<!-- Local dev tool. Needs tools/devserver.py (POST /save).
+     export.html?preset=fow  exports the Fog of War boards to exports/ as SVG + PNG. -->
+<style>body{font:14px/1.5 system-ui;margin:24px}pre{white-space:pre-wrap}</style>
+<script src="core.js"></script>
+<h1>Vellum batch export</h1>
+<pre id="log">starting…</pre>
+<script>
+const SLUGS = ['start', '1-e4', '1-Nf6', '2-Nc3', '2-d6', '3-Bb5', '3-g6', '4-Bxe8'];
+const PRESETS = {
+  fow: [
+    ...SLUGS.map((s, k) => ({ page: 'page-real', nodes: [`real-panel-${k}`], file: `real-${k}-${s}`, pad: 24, bg: '#F9F9F9', scale: 2 })),
+    { page: 'page-real', nodes: ['real-section'], file: 'real-positions-all', pad: 0, scale: 1 },
+    { page: 'page-view', nodes: ['fog-section'], file: 'whites-view-all', pad: 0, scale: 1 },
+    { page: 'page-view', nodes: ['start-section'], file: 'whites-view-start', pad: 0, scale: 2 },
+  ],
+};
+const log = (s) => { document.getElementById('log').textContent += '\n' + s; };
+async function save(name, data) {
+  const r = await fetch('/save?name=' + encodeURIComponent(name), { method: 'POST', body: data });
+  if (!r.ok) throw new Error(`${name}: ${r.status}`);
+}
+(async () => {
+  try {
+    const q = new URLSearchParams(location.search);
+    const doc = await (await fetch(q.get('doc') || 'samples/fog-of-war.json')).json();
+    await Promise.all(['400', '500', '600', '700'].map((w) => document.fonts.load(`${w} 16px Inter`)));
+    const c = document.createElement('canvas').getContext('2d');
+    const ctx = { index: VellumCore.buildIndex(doc), measure: (t, f) => { c.font = f; return c.measureText(t).width; } };
+    const fontCss = await VellumCore.embeddedFontCss();
+    log(fontCss ? `embedded Inter (${Math.round(fontCss.length / 1024)} KB)` : 'could not embed Inter; using @import');
+    const jobs = PRESETS[q.get('preset') || 'fow'];
+    for (const j of jobs) {
+      const nodes = j.nodes.map((id) => ctx.index.map.get(id));
+      const svg = VellumCore.exportSVG(nodes, ctx, { padding: j.pad, background: j.bg, fontCss, title: nodes[0].name });
+      await save(j.file + '.svg', svg);
+      const png = await VellumCore.svgToPng(svg, j.scale);
+      await save(j.file + '.png', png);
+      log(`${j.file}: svg ${Math.round(svg.length / 1024)} KB, png ${Math.round(png.size / 1024)} KB`);
+    }
+    log('done');
+    document.body.dataset.done = '1';
+  } catch (e) {
+    log('ERROR ' + e.message);
+    document.body.dataset.done = 'error';
+  }
+})();
+</script>
