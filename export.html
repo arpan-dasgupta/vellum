@@ -61,6 +61,56 @@ async function review(doc, ctx, fontCss, q) {
   document.body.dataset.done = '1';
 }
 
+// Robot head frames for samples/assets/robot-thinking.gif (an original drawing).
+// Saves exports/_robot-NN.png; tools/make_gif.py turns them into the GIF.
+async function robotFrames() {
+  const N = 24, SIZE = 160, k = SIZE / 144;
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const mix = (c1, c2, t) => '#' + [0, 2, 4].map((i) => Math.round(lerp(parseInt(c1.slice(1 + i, 3 + i), 16), parseInt(c2.slice(1 + i, 3 + i), 16), t)).toString(16).padStart(2, '0')).join('');
+  for (let f = 0; f < N; f++) {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = SIZE;
+    const g = cv.getContext('2d');
+    g.scale(k, k);
+    g.lineJoin = 'round';
+    g.lineCap = 'round';
+    const rr = (x, y, w, h, r, fill, stroke, lw) => { g.beginPath(); g.roundRect(x, y, w, h, r); if (fill) { g.fillStyle = fill; g.fill(); } if (stroke) { g.strokeStyle = stroke; g.lineWidth = lw; g.stroke(); } };
+    const t = f / N;
+    // Antenna, with a light that pulses.
+    g.strokeStyle = '#475569'; g.lineWidth = 4;
+    g.beginPath(); g.moveTo(72, 36); g.lineTo(72, 18); g.stroke();
+    g.beginPath(); g.arc(72, 13, 7, 0, Math.PI * 2);
+    g.fillStyle = mix('#FDE68A', '#F59E0B', (Math.sin(t * Math.PI * 4) + 1) / 2); g.fill();
+    g.strokeStyle = '#475569'; g.lineWidth = 2; g.stroke();
+    // Neck, ears and head.
+    rr(60, 116, 24, 12, 3, '#94A3B8', '#334155', 2.5);
+    rr(14, 64, 16, 32, 5, '#94A3B8', '#334155', 2.5);
+    rr(114, 64, 16, 32, 5, '#94A3B8', '#334155', 2.5);
+    rr(26, 34, 92, 86, 18, '#E2E8F0', '#334155', 3);
+    // Face screen.
+    rr(38, 48, 68, 52, 10, '#0F172A');
+    // Eyes look left, toward the thought bubble, drift back a little, and blink.
+    const look = f < 12 ? -5 : f < 16 ? lerp(-5, -1, (f - 12) / 4) : f < 20 ? -1 : lerp(-1, -5, (f - 20) / 4);
+    const open = f === 18 || f === 19 ? 0.15 : 1;
+    for (const ex of [58, 86]) {
+      const h = 14 * open;
+      rr(ex - 6 + look, 66 - h / 2, 12, h, Math.min(6, h / 2), '#2DD4BF');
+    }
+    // Thinking dots: a wave running across three dots.
+    for (let i = 0; i < 3; i++) {
+      const phase = (f - i * 3 + N) % 9;
+      const on = phase < 4 ? 1 - phase / 4 : 0;
+      g.beginPath(); g.arc(62 + i * 10, 88, 3.2, 0, Math.PI * 2);
+      g.fillStyle = mix('#134E4A', '#5EEAD4', on); g.fill();
+    }
+    const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
+    await save(`_robot-${String(f).padStart(2, '0')}.png`, blob);
+  }
+  log(`robot: ${N} frames at ${SIZE}px`);
+  log('done');
+  document.body.dataset.done = '1';
+}
+
 (async () => {
   try {
     const q = new URLSearchParams(location.search);
@@ -71,6 +121,7 @@ async function review(doc, ctx, fontCss, q) {
     const fontCss = await VellumCore.embeddedFontCss();
     log(fontCss ? `embedded Inter (${Math.round(fontCss.length / 1024)} KB)` : 'could not embed Inter; using @import');
     if (q.get('preset') === 'review') { await review(doc, ctx, fontCss, q); return; }
+    if (q.get('preset') === 'robot') { await robotFrames(); return; }
     const jobs = PRESETS[q.get('preset') || 'fow'];
     for (const j of jobs) {
       const nodes = j.nodes.map((id) => ctx.index.map.get(id));

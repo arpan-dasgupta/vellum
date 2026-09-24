@@ -6,13 +6,15 @@ moves with the fog lifted.
 
 Run: python3 tools/build_fow.py
 """
+import base64
 import hashlib
 import json
+import math
 import os
 
 FILES = 'abcdefgh'
 HERE = os.path.dirname(os.path.abspath(__file__))
-SAMPLE_VERSION = 8  # bump when the sample changes, so the editor offers the new version
+SAMPLE_VERSION = 10  # bump when the sample changes, so the editor offers the new version
 OUT = os.path.join(HERE, '..', 'samples', 'fog-of-war.json')
 
 # ---------- chess logic (pseudo-legal moves, no check: Fog of War rules) ----------
@@ -415,7 +417,7 @@ MOVE_GAP = 20    # space between a move arrow and the boards it joins
 MOVE_ICON = 80   # size of the moved piece drawn above a White move arrow
 BRACE_W, BRACE_H = 460, 40   # the brace under each hidden move, where its possible moves will go
 BRACE_GAP = 70               # from the bottom of the real-position boards to the braces
-POSSIBLE_SPACE = 150         # room left under each brace for the possible moves
+POSSIBLE_SPACE = 18 + 72 + 4 + 22 + 64 + 8 * 34 + 40 + 60  # possible moves, then the thought-out board and its bubble
 MOVE_PIECE = {'1. e4': 'P', '2. Nc3': 'N', '3. Bb5': 'B', '4. Bxe8': 'B'}  # the White piece that moved
 HEAD_W = {'1…': 33.1, '2…': 37.9, '3…': 37.7}  # measured Inter Semi Bold 24px widths
 REAL_LABELS = ['Real position: start', 'Real position after 1. e4', 'Real position after 1… Nf6',
@@ -461,7 +463,7 @@ def sequence_section(title, intro, move_line, texts, fogged, prefix):
             pk.append(vector_nodes(ox, by + BW + EMB_GAP, embedding(p), vid))
             pk.append({'id': nid('c'), 'type': 'CONNECTOR', 'name': 'Board to embedding',
                        'from': {'id': bid, 'side': 'BOTTOM'}, 'to': {'id': vid, 'side': 'TOP'},
-                       'gap': [10, 10], 'stroke': CHAR, 'strokeWidth': 4, 'arrow': True})
+                       'gap': [10, 10], 'stroke': CONTEXT, 'strokeWidth': 4, 'arrow': True})
             ry = by + BW + REAL_GAP
             pk.append(text('Real position label', ox, ry, REAL_LABELS[k], 18, 600, CHAR, w=BW, align='center'))
             pk.append(group('Real position', board_nodes(ox, ry + 34, S, p, False, f'{prefix}-real-board-{k}', theme=BLUE),
@@ -484,8 +486,17 @@ def sequence_section(title, intro, move_line, texts, fogged, prefix):
             down = {'id': nid('c'), 'type': 'CONNECTOR', 'name': 'Into possible moves',
                     'from': {'id': a['id'], 'side': 'CENTER'}, 'to': {'id': br['id'], 'side': 'TOP'},
                     'gap': [8, 6], 'stroke': GREY, 'strokeWidth': 3, 'dash': '12 7', 'headSize': 16, 'arrow': True}
-            row = possible_moves_row(pos[k], PLIES[k][:2], gcx, by_ + BRACE_H + 18)
-            kids.append(group(f'Hidden move {labels[k]}', [a, down, br, row]))
+            row_y = by_ + BRACE_H + 18
+            row = possible_moves_row(pos[k], PLIES[k][:2], gcx, row_y)
+            tb_y = row_y + 72 + 4 + 22 + THOUGHT_GAP
+            tb = thought_board(pos[k + 1], gcx, tb_y, f'{prefix}-thought-{k}')
+            parts = [a, down, br, row]
+            if k == 1:
+                # The first thought-out board sits in a thought bubble, thought by a robot on its right.
+                parts.append(thinking(gcx - 4 * THOUGHT_S, tb_y, 8 * THOUGHT_S, tb))
+            else:
+                parts.append(tb)
+            kids.append(group(f'Hidden move {labels[k]}', parts))
             continue
         # White moves carry the moving piece above the arrow.
         mid_x = SEQ_X + PAD + k * (BW + GAP) + BW + GAP / 2
@@ -523,7 +534,7 @@ def possible_moves_row(before, played, cx, y):
     others = [m for m in moves if m is not real]
     pick = [others[round(i * (len(others) - 1) / 3)] for i in range(4)]  # spread across the list
     shown = pick[:2] + [real] + pick[2:]
-    slot, small, big = 76, 44, 58
+    slot, small, big = 76, 44, 72
     total = len(shown) * slot
     x0 = cx - total / 2
     nodes = [text('More moves', x0 - 30, y + 8, '…', 28, 600, GREY),
@@ -534,10 +545,81 @@ def possible_moves_row(before, played, cx, y):
         mx = x0 + i * slot + slot / 2
         pc = piece('b', m[2], m[1], mx - size / 2, y + (big - size) / 2, size)
         pc['name'] = ('Played: ' if is_real else 'Possible: ') + san(m, moves)
-        lab = text('Move', mx - slot / 2, y + big + 4, san(m, moves), 15 if is_real else 13, 700 if is_real else 500,
+        lab = text('Move', mx - slot / 2, y + big + 4, san(m, moves), 17 if is_real else 13, 700 if is_real else 500,
                    CHAR if is_real else GREY, w=slot, align='center')
         nodes += [pc, lab]
     return group(f'Possible moves ({len(moves)} in all)', nodes)
+
+
+THOUGHT_S = 34   # square size of the "thought out" board under each played hidden move
+THOUGHT_GAP = 64  # from the played move's label down to that board
+BUBBLE_PAD, BUBBLE_BUMP = 24, 14  # the thought bubble around the first thought-out board
+ROBOT = 120        # size of the robot head thinking about it
+ROBOT_GIF = os.path.join(HERE, '..', 'samples', 'assets', 'robot-thinking.gif')
+
+
+def thought_board(after, cx, y, bid):
+    """The full, unfogged position once the played move is made: what the model imagines after
+    sampling it. Drawn small, in the real-position theme, right under the played move."""
+    return group('Thought-out position', board_nodes(cx - 4 * THOUGHT_S, y, THOUGHT_S, after, False, bid, theme=BLUE),
+                 id=bid + '-group')
+
+
+def cloud_path(w, h, r, step, bump):
+    """A thought-bubble outline around a w x h rounded rectangle, as path data in local coordinates
+    (the rectangle starts at bump, bump). Scallops bulge outward along the whole edge."""
+    ox, oy = bump, bump
+    segs = [('line', (ox + r, oy), (ox + w - r, oy)), ('arc', (ox + w - r, oy + r), -90, 0),
+            ('line', (ox + w, oy + r), (ox + w, oy + h - r)), ('arc', (ox + w - r, oy + h - r), 0, 90),
+            ('line', (ox + w - r, oy + h), (ox + r, oy + h)), ('arc', (ox + r, oy + h - r), 90, 180),
+            ('line', (ox, oy + h - r), (ox, oy + r)), ('arc', (ox + r, oy + r), 180, 270)]
+    lens = [math.dist(a, b) if kind == 'line' else r * math.radians(abs(e - s0)) for kind, *rest in segs
+            for a, b, s0, e in [(rest[0], rest[1], 0, 0) if kind == 'line' else ((0, 0), (0, 0), rest[1], rest[2])]]
+    total = sum(lens)
+    n = max(8, round(total / step))
+
+    def at(dist):
+        for i, ((kind, *rest), ln) in enumerate(zip(segs, lens)):
+            if dist <= ln or i == len(segs) - 1:
+                t = dist / ln if ln else 0
+                if kind == 'line':
+                    (x1, y1), (x2, y2) = rest
+                    return x1 + (x2 - x1) * t, y1 + (y2 - y1) * t
+                (cx, cy), a0, a1 = rest
+                ang = math.radians(a0 + (a1 - a0) * t)
+                return cx + r * math.cos(ang), cy + r * math.sin(ang)
+            dist -= ln
+        return segs[0][1]
+    pts = [at(total * i / n) for i in range(n)]
+    d = f'M{pts[0][0]:.1f},{pts[0][1]:.1f}'
+    for i in range(n):
+        (x1, y1), (x2, y2) = pts[i], pts[(i + 1) % n]
+        dx, dy = x2 - x1, y2 - y1
+        ln = math.hypot(dx, dy) or 1
+        mx, my = (x1 + x2) / 2 + dy / ln * bump * 2, (y1 + y2) / 2 - dx / ln * bump * 2
+        d += f' Q{mx:.1f},{my:.1f} {x2:.1f},{y2:.1f}'
+    return d + ' Z'
+
+
+def thinking(bx, by, size, board_group):
+    """Wrap a board in a thought bubble whose trail of dots leads right to an animated robot head."""
+    w = h = size + 2 * BUBBLE_PAD
+    x, y = bx - BUBBLE_PAD - BUBBLE_BUMP, by - BUBBLE_PAD - BUBBLE_BUMP
+    total = w + 2 * BUBBLE_BUMP
+    bubble = {'id': nid('pc'), 'type': 'PATH', 'name': 'Thought bubble', 'x': x, 'y': y, 'w': total, 'h': total,
+              'vw': total, 'vh': total, 'fill': WHITE, 'stroke': '#9CA3AF', 'detail': '#9CA3AF', 'strokeWidth': 2.5,
+              'paths': [{'role': 'body', 'd': cloud_path(w, h, 60, 46, BUBBLE_BUMP)}]}
+    right = x + total
+    cy = by + size * 0.62
+    dots = []
+    for i, (dx, r) in enumerate([(16, 12), (44, 9), (66, 6)]):
+        dots.append({'id': nid(), 'type': 'ELLIPSE', 'name': f'Thought trail {i + 1}', 'x': right + dx - r,
+                     'y': cy + i * 10 - r, 'w': 2 * r, 'h': 2 * r, 'fill': WHITE, 'stroke': '#9CA3AF', 'strokeWidth': 2.5})
+    with open(ROBOT_GIF, 'rb') as fh:
+        src = 'data:image/gif;base64,' + base64.b64encode(fh.read()).decode()
+    robot = {'id': nid(), 'type': 'IMAGE', 'name': 'Robot thinking (animated GIF)', 'x': right + 76,
+             'y': cy + 20 - ROBOT * 0.55, 'w': ROBOT, 'h': ROBOT, 'src': src}
+    return group('Thinking robot', [bubble, board_group] + dots + [robot])
 
 
 def context_rail(x0, board_bottom):

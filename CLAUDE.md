@@ -21,6 +21,10 @@ Work through them like this:
 7. **Publish, then reply and resolve.** Republish the artifact. For each handled item, set `status: "resolved"`, `resolvedBy: "claude"` and `resolvedAt`, and append a reply `{id, author: "claude", text, at}` saying what changed. Refresh the document's `summary`, `open`, `count` and `updatedAt`. Write with ArtifactData `update`, pinned with `if_version` to the version you read. On `version_mismatch` the user is probably editing live: re-read, redo the change on the new copy, and retry. Never force a write.
 8. **Report back** in chat: what changed, what's still open, and any question you left on an annotation.
 
+## Assets
+
+`samples/assets/robot-thinking.gif` is an original drawing. To change it, edit `robotFrames()` in `export.html`, open `export.html?preset=robot` to render the frames, then run `python3 tools/make_gif.py samples/assets/robot-thinking.gif exports/_robot-*.png` and rebuild the sample. `tools/make_gif.py` needs only the Python standard library.
+
 ## Commits
 
 Commit editor changes and diagram changes separately. Never commit `.tmp/` or `exports/_*` (review images); both are git-ignored. Only commit when the user asks.
