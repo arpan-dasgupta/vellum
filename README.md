@@ -15,6 +15,7 @@ A minimal Figma-style vector editor that runs in the browser. There is no build 
   - **Arrows.** Ends stick to the layer under them: small layers snap to their centre, big ones keep the exact point. Hold Alt for a free end. Right-drag draws one from any tool.
   - **Highlights.** Click to highlight the most specific layer under the pointer, or drag to highlight an area. Right-click highlights from any tool.
   - **Combining.** Select several annotations and press ⌘G, or "Combine into one annotation", to make them one annotation with one thread.
+- **Images.** Drop, paste or place images (File › Place image…). They're stored inside the document, and animated GIFs play on the canvas.
 - **Phones.** The tools move to a floating bar and two-finger pinch zooms.
 
 ## Run it locally
@@ -66,6 +67,7 @@ Every node has `id`, `type` and `name`, and uses absolute page coordinates. Node
 - `CONNECTOR`: `from{id, side} to{id, side} label stroke strokeWidth dash arrow headSize`
 - `INK`: `strokes[{points, stroke, strokeWidth}] stroke strokeWidth intent` (a sketch; `intent` is `mockup` or `mark`)
 - `STICKY`: `x y w h text fill fontSize` (note; height grows with the text)
+- `IMAGE`: `x y w h src` (`src` is a data URI)
 
 ## Sharing annotations
 

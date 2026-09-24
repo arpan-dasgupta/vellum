@@ -233,6 +233,7 @@
         <button data-cmd="new">New file</button>
         <button data-cmd="open">Open file… <kbd>.json</kbd></button>
         <button data-cmd="save">Save file <kbd>.json</kbd></button>
+        <button data-cmd="place-image">Place image… <kbd>or drop, paste</kbd></button>
         <hr>
         <button data-cmd="sample">Load Fog of War sample</button>
         <hr>
@@ -293,6 +294,7 @@
   <aside class="panel right" id="right" aria-label="Design properties"><div id="props"></div></aside>
 </div>
 <input type="file" id="fileInput" accept=".json,application/json" hidden>
+<input type="file" id="imageInput" accept="image/*" multiple hidden>
 
 <script src="core.js"></script>
 <script src="app.js"></script>

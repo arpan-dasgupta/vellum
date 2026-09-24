@@ -7,8 +7,8 @@
   const STORE_KEY = 'vellum:doc:v1';
   const THEME_KEY = 'vellum:theme';
   const SAMPLE_URL = 'samples/fog-of-war.json';
-  const RESIZABLE = new Set(['RECT', 'ELLIPSE', 'PATH', 'SECTION', 'TEXT', 'STICKY']);
-  const TYPE_LABEL = { RECT: 'Rectangle', ELLIPSE: 'Ellipse', TEXT: 'Text', PATH: 'Vector', GROUP: 'Group', SECTION: 'Section', CONNECTOR: 'Connector', INK: 'Drawing', STICKY: 'Note' };
+  const RESIZABLE = new Set(['RECT', 'ELLIPSE', 'PATH', 'SECTION', 'TEXT', 'STICKY', 'IMAGE']);
+  const TYPE_LABEL = { RECT: 'Rectangle', ELLIPSE: 'Ellipse', TEXT: 'Text', PATH: 'Vector', GROUP: 'Group', SECTION: 'Section', CONNECTOR: 'Connector', INK: 'Drawing', STICKY: 'Note', IMAGE: 'Image' };
   const ANN_COLORS = [
     { name: 'Red', v: '#E8503A', note: '#FFCDC2' },
     { name: 'Orange', v: '#F59E0B', note: '#FFE0C2' },
@@ -1132,6 +1132,49 @@
   });
   renderColorMenu();
 
+  /* ---------------- images ---------------- */
+  // Images are stored in the document as data URIs, so files stay self-contained.
+  function readAsDataUrl(file) {
+    return new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(file); });
+  }
+  async function placeImages(files, at) {
+    const imgs = [...files].filter((f) => /^image\//.test(f.type));
+    if (!imgs.length) return;
+    const big = imgs.find((f) => f.size > 3 * 1024 * 1024);
+    if (big) toast(`${big.name} is large; it's stored inside the file, so saving may be slow.`);
+    const s = stageSize();
+    let p = at || { x: (s.w / 2 - S.view.x) / S.view.z, y: (s.h / 2 - S.view.y) / S.view.z };
+    const nodes = [];
+    for (const f of imgs) {
+      const src = await readAsDataUrl(f);
+      const im = new Image();
+      im.src = src;
+      try { await im.decode(); } catch (e) { toast(`Couldn't read ${f.name} as an image.`); continue; }
+      const scale = Math.min(1, 480 / Math.max(im.naturalWidth, im.naturalHeight));
+      const w = Math.round(im.naturalWidth * scale), h = Math.round(im.naturalHeight * scale);
+      nodes.push({ id: C.newId(), type: 'IMAGE', name: f.name.replace(/\.[^.]+$/, '') || 'Image', x: p.x - w / 2, y: p.y - h / 2, w, h, src });
+      p = { x: p.x + 24, y: p.y + 24 };
+    }
+    if (!nodes.length) return;
+    mutate(() => {
+      const target = containerAt(nodes[0]);
+      for (const n of nodes) target.children.push(n);
+      S.sel = nodes.map((n) => n.id);
+    });
+  }
+  $('#imageInput').addEventListener('change', (e) => { placeImages(e.target.files); e.target.value = ''; });
+  svg.addEventListener('dragover', (e) => { if ([...e.dataTransfer.items].some((i) => i.kind === 'file')) e.preventDefault(); });
+  svg.addEventListener('drop', (e) => {
+    if (!e.dataTransfer.files.length) return;
+    e.preventDefault();
+    placeImages(e.dataTransfer.files, toWorld(e));
+  });
+  window.addEventListener('paste', (e) => {
+    if (typing(e)) return;
+    const files = [...(e.clipboardData ? e.clipboardData.files : [])].filter((f) => /^image\//.test(f.type));
+    if (files.length) { e.preventDefault(); placeImages(files); }
+  });
+
   /* ---------------- text editing ---------------- */
   function startEdit(n, selectAll) {
     S.editing = n.id;
@@ -1488,6 +1531,7 @@
     GROUP: '<svg width="16" height="16" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="2 1.6"/></svg>',
     SECTION: '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M5 2v12M11 2v12M2 5h12M2 11h12" stroke="currentColor" stroke-width="1.2"/></svg>',
     CONNECTOR: '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 13 12 4" stroke="currentColor" stroke-width="1.3"/><path d="M8.5 3.5H12.5V7.5" stroke="currentColor" stroke-width="1.3" fill="none"/></svg>',
+    IMAGE: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><rect x="2.5" y="3" width="11" height="10" rx="1"/><circle cx="6" cy="6.5" r="1.2"/><path d="m3 12 3.5-3.5 2.5 2.5 2-2 2.5 2.5"/></svg>',
     INK: '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M2.5 11c2-4 4-6 5-4s2 3 6-3" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>',
     STICKY: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M3 3h10v6.5L9.5 13H3z"/><path d="M13 9.5H9.5V13"/></svg>',
   };
@@ -1863,6 +1907,7 @@
       case 'combine': combineAnnotations(); break;
       case 'ungroup': ungroupSel(); break;
       case 'theme': toggleTheme(); break;
+      case 'place-image': $('#imageInput').click(); break;
       case 'reply': {
         const n = selNodes()[0];
         const ta = $('#replyText');

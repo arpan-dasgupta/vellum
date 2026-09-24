@@ -10,7 +10,8 @@
   'use strict';
 
   const DEFAULT_FONT = "Inter, 'Helvetica Neue', Arial, sans-serif";
-  const FONT_IMPORT = "@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');";
+  // The & is escaped because this goes inside an SVG <style> element, which must be valid XML.
+  const FONT_IMPORT = "@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap');";
   const CONTAINER = new Set(['GROUP', 'SECTION']);
 
   const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -353,6 +354,9 @@
         }
         return `<g transform="translate(${r2(n.x)} ${r2(n.y)}) scale(${r2(sx * 1000) / 1000} ${r2(sy * 1000) / 1000})">${body}</g>`;
       }
+      case 'IMAGE':
+        if (!n.src) return '';
+        return `<image href="${esc(n.src)}" xlink:href="${esc(n.src)}" x="${r2(n.x)}" y="${r2(n.y)}" width="${r2(n.w)}" height="${r2(n.h)}" preserveAspectRatio="xMidYMid meet"/>`;
       case 'INK':
         return inkStrokes(n).filter((st) => st.points && st.points.length).map((st) =>
           `<path d="${inkPath(st.points)}" fill="none" stroke="${esc(st.stroke || n.stroke || '#E8503A')}" stroke-width="${r2(st.strokeWidth || n.strokeWidth || 4)}" stroke-linecap="round" stroke-linejoin="round"/>`).join('');
@@ -429,7 +433,7 @@
     body += renderList(vis, ctx, { forExport: true });
     const title = opts.title ? `<title>${esc(opts.title)}</title>` : '';
     const fonts = opts.fontCss || FONT_IMPORT;
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${r2(w)}" height="${r2(h)}" viewBox="${r2(x)} ${r2(y)} ${r2(w)} ${r2(h)}">${title}<style>${fonts}</style>${body}</svg>`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${r2(w)}" height="${r2(h)}" viewBox="${r2(x)} ${r2(y)} ${r2(w)} ${r2(h)}">${title}<style>${fonts}</style>${body}</svg>`;
   }
 
   /* Browser only: fetch Inter (latin subset) and return @font-face CSS with the font
