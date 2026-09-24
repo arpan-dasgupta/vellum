@@ -6,12 +6,13 @@ moves with the fog lifted.
 
 Run: python3 tools/build_fow.py
 """
+import hashlib
 import json
 import os
 
 FILES = 'abcdefgh'
 HERE = os.path.dirname(os.path.abspath(__file__))
-SAMPLE_VERSION = 2  # bump when the sample changes, so the editor offers the new version
+SAMPLE_VERSION = 6  # bump when the sample changes, so the editor offers the new version
 OUT = os.path.join(HERE, '..', 'samples', 'fog-of-war.json')
 
 # ---------- chess logic (pseudo-legal moves, no check: Fog of War rules) ----------
@@ -269,11 +270,62 @@ def caption(x, y, w, main, aside=None, size=16):
     return n
 
 
-def arrow(from_id, to_id, label, hidden):
-    return {'id': nid('c'), 'type': 'CONNECTOR', 'name': ('Hidden Black move ' if hidden else 'Move ') + label,
-            'from': {'id': from_id, 'side': 'RIGHT'}, 'to': {'id': to_id, 'side': 'LEFT'},
-            'label': label, 'labelSize': 18, 'stroke': GREY if hidden else CHAR, 'strokeWidth': 3,
-            'dash': '10 6' if hidden else None, 'arrow': True}
+def arrow(from_id, to_id, label, hidden, gap=0, width=3, show_label=False):
+    a = {'id': nid('c'), 'type': 'CONNECTOR', 'name': ('Hidden Black move ' if hidden else 'Move ') + label,
+         'from': {'id': from_id, 'side': 'RIGHT'}, 'to': {'id': to_id, 'side': 'LEFT'},
+         'stroke': GREY if hidden else CHAR, 'strokeWidth': width, 'gap': gap,
+         'dash': '12 7' if hidden else None, 'arrow': True}
+    if show_label:
+        # The move sits on the line, on a patch of the section's own colour.
+        a.update(label=label, labelSize=14, labelFill=SECTION_FILL)
+    return a
+
+
+PREDICT = '#D97706'  # amber, for the next-state prediction arcs
+
+
+def prediction_arc(from_id, to_id, k):
+    """A curved arrow over the top of two boards: this fogged state predicts the next one."""
+    return {'id': nid('c'), 'type': 'CONNECTOR', 'name': f'Predicts state {k + 1} from state {k}',
+            'from': {'id': from_id, 'side': 'TOP', 'at': 0.82}, 'to': {'id': to_id, 'side': 'TOP', 'at': 0.19},
+            'bend': 80, 'gap': [8, 8], 'stroke': PREDICT, 'strokeWidth': 6, 'headSize': 22, 'arrow': True}
+
+
+# ---------- embedding vectors ----------
+
+EMB_DIM = 16
+EMB_NEG, EMB_POS = (0x2F, 0x6F, 0xEB), (0xF5, 0x9E, 0x0B)  # blue for negative values, orange for positive
+
+
+def embedding(pos):
+    """A stand-in embedding of White's fogged view: deterministic from what White can see, so two
+    positions that look the same to White get the same vector."""
+    seen = ' '.join(sorted(pos['vis'])) + '|' + ' '.join(
+        sorted(f"{c}{p}{sq}" for sq, (c, p) in pos['board'].items() if c == 'w' or sq in pos['vis']))
+    digest = hashlib.sha256(seen.encode()).digest()
+    return [round(b / 127.5 - 1, 3) for b in digest[:EMB_DIM]]
+
+
+def emb_color(v):
+    target = EMB_POS if v >= 0 else EMB_NEG
+    t = min(1.0, abs(v)) * 0.9 + 0.1
+    r, g, b = (round(255 + (c - 255) * t) for c in target)
+    return f'#{r:02X}{g:02X}{b:02X}'
+
+
+def vector_nodes(ox, y, values, gid):
+    """A row of cells between square brackets, like a vector written out."""
+    cw, gap, ch = 24, 3, 36
+    row_w = EMB_DIM * cw + (EMB_DIM - 1) * gap
+    x0 = ox + (BW - row_w) / 2
+    cells = [rect(f'Value {i + 1}: {v:+.2f}', x0 + i * (cw + gap), y, cw, ch, emb_color(v), radius=3)
+             for i, v in enumerate(values)]
+    def bracket(nm, x, flip):
+        d = 'M9,1 H1 V47 H9' if not flip else 'M1,1 H9 V47 H1'
+        return {'id': nid('pc'), 'type': 'PATH', 'name': nm, 'x': x, 'y': y - 6, 'w': 10, 'h': 48, 'vw': 10, 'vh': 48,
+                'fill': None, 'stroke': CHAR, 'detail': CHAR, 'strokeWidth': 2.5, 'paths': [{'role': 'ink', 'd': d}]}
+    return group('Embedding', [bracket('Left bracket', x0 - 16, False), group('Values', cells),
+                               bracket('Right bracket', x0 + row_w + 6, True)], id=gid)
 
 # ---------- content ----------
 
@@ -303,7 +355,12 @@ REAL_TEXT = [
 ]
 
 S, BW, PAD, GAP, TOP = 56, 448, 48, 180, 210
-REAL_GAP = 140  # from the bottom of a fogged board to the real-position label below it
+FOG_TOP = 300    # the fogged row sits lower, leaving room for the prediction arcs above it
+EMB_GAP = 150    # from the bottom of a fogged board to its embedding vector (room for the context arrows)
+REAL_GAP = 230   # from the bottom of a fogged board to the real-position label below it
+MOVE_GAP = 20    # space between a move arrow and the boards it joins
+MOVE_ICON = 60   # size of the moved piece drawn above a White move arrow
+MOVE_PIECE = {'1. e4': 'P', '2. Nc3': 'N', '3. Bb5': 'B', '4. Bxe8': 'B'}  # the White piece that moved
 HEAD_W = {'1…': 33.1, '2…': 37.9, '3…': 37.7}  # measured Inter Semi Bold 24px widths
 REAL_LABELS = ['Real position: start', 'Real position after 1. e4', 'Real position after 1… Nf6',
                'Real position after 2. Nc3', 'Real position after 2… d6', 'Real position after 3. Bb5',
@@ -323,37 +380,67 @@ def sequence_section(title, intro, move_line, texts, fogged, prefix):
         ml['runs'] = [{'text': lead, 'color': GREY}, {'text': move_line[len(lead):], 'color': CHAR}]
     kids.append(ml)
     board_ids = []
+    top = FOG_TOP if fogged else TOP
     for k, p in enumerate(pos):
-        ox, oy = SEQ_X + PAD + k * (BW + GAP), SEQ_Y + TOP
+        ox, oy = SEQ_X + PAD + k * (BW + GAP), SEQ_Y + top
         by = oy + 44
         head_txt = texts[k][0]
         hidden = fogged and p['side'] == 'b'
-        pk = [text('Heading', ox, oy, head_txt, 24, 600)]
         if hidden:
-            tx = ox + HEAD_W.get(head_txt, 40) + 12
+            hw = HEAD_W.get(head_txt, 40)
+            hx = ox + (BW - (hw + 12 + 100)) / 2
+            pk = [text('Heading', hx, oy, head_txt, 24, 600)]
+            tx = hx + hw + 12
             pk.append(rect('Hidden move tag', tx, oy + 2.5, 100, 24, GREY, radius=12))
             pk.append(text('Hidden move', tx, oy + 2.5 + (24 - 13 * 1.3) / 2, 'Hidden move', 13, 600, WHITE,
                            w=100, align='center', lineHeight=1.3))
+        else:
+            pk = [text('Heading', ox, oy, head_txt, 24, 600, w=BW, align='center')]
         bid = f'{prefix}-board-{k}'
         board_ids.append(bid)
         pk += board_nodes(ox, by, S, p, fogged, bid)
         if fogged:
-            pk.append(caption(ox, by + BW + 14, BW, texts[k][1], texts[k][2]))
             # The real position, fog lifted, in the blue-and-black theme.
+            vid = f'{prefix}-embedding-{k}'
+            pk.append(vector_nodes(ox, by + BW + EMB_GAP, embedding(p), vid))
+            pk.append({'id': nid('c'), 'type': 'CONNECTOR', 'name': 'Board to embedding',
+                       'from': {'id': bid, 'side': 'BOTTOM'}, 'to': {'id': vid, 'side': 'TOP'},
+                       'gap': [10, 10], 'stroke': CHAR, 'strokeWidth': 4, 'arrow': True})
             ry = by + BW + REAL_GAP
-            pk.append(text('Real position label', ox, ry, REAL_LABELS[k], 18, 600, CHAR))
+            pk.append(text('Real position label', ox, ry, REAL_LABELS[k], 18, 600, CHAR, w=BW, align='center'))
             pk.append(group('Real position', board_nodes(ox, ry + 34, S, p, False, f'{prefix}-real-board-{k}', theme=BLUE),
                             id=f'{prefix}-real-{k}'))
-        else:
-            pk.append(caption(ox, by + BW + 14, BW, texts[k][1]))
         kids.append(group(f'Position {k} · {head_txt}', pk, id=f'{prefix}-panel-{k}'))
     labels = ([t[0] for t in FOG_TEXT[1:]] if fogged else [t[0] for t in REAL_TEXT[1:]])
     if fogged:
         labels = ['1. e4', '1…', '2. Nc3', '2…', '3. Bb5', '3…', '4. Bxe8']
     for k in range(7):
-        kids.append(arrow(board_ids[k], board_ids[k + 1], labels[k], fogged and k % 2 == 1))
+        if not fogged:
+            kids.append(arrow(board_ids[k], board_ids[k + 1], labels[k], False))
+            continue
+        hidden = k % 2 == 1
+        a = arrow(board_ids[k], board_ids[k + 1], labels[k], hidden, gap=MOVE_GAP, width=5, show_label=not hidden)
+        if hidden:
+            kids.append(a)
+            continue
+        # White moves carry the moving piece above the arrow.
+        mid_x = SEQ_X + PAD + k * (BW + GAP) + BW + GAP / 2
+        mid_y = SEQ_Y + top + 44 + BW / 2
+        size = MOVE_ICON
+        pc = piece('w', MOVE_PIECE[labels[k]], labels[k], mid_x - size / 2, mid_y - 16 - size, size)
+        pc['name'] = f'Moved piece ({labels[k]})'
+        kids.append(group(f'Move {labels[k]}', [a, pc]))
+    if fogged:
+        kids.append(group('Next-state predictions', [prediction_arc(board_ids[k], board_ids[k + 1], k) for k in range(7)]))
+        # Context: the embedding at i also draws on the states before it, shown as an arrow
+        # from the previous board into this column's vector.
+        kids.append(group('Context arrows', [
+            {'id': nid('c'), 'type': 'CONNECTOR', 'name': f'Context into embedding {k} (states 0–{k - 1})',
+             'from': {'id': board_ids[k - 1], 'side': 'BOTTOM'}, 'to': {'id': f'{prefix}-embedding-{k}', 'side': 'TOP', 'at': 0.4},
+             'gap': [10, 10], 'stroke': CHAR, 'strokeWidth': 3, 'arrow': True}
+            for k in range(1, 8)]))
     w = PAD * 2 + 8 * BW + 7 * GAP
-    h = (TOP + 44 + BW + REAL_GAP + 34 + BW + PAD) if fogged else 840
+    h = (top + 44 + BW + REAL_GAP + 34 + BW + PAD) if fogged else (top + 44 + BW + PAD)
     return section('Fog of War — 7-move sequence' if fogged else 'Real positions', SEQ_X, SEQ_Y, w, h, kids,
                    id=f'{prefix}-section')
 
@@ -363,10 +450,7 @@ def start_section():
     S0, bx, by = 80, 240, 310
     kids = [text('Title', 240, 232, 'Fog of War — Starting position (White to move)', 24, 600)]
     kids += board_nodes(bx, by, S0, p0, True, 'start-board', whole_fog_rect=True)
-    kids.append(text('Caption', bx, by + 8 * S0 + 16,
-                     'White sees only squares its pieces can move to: ranks 1–4. Ranks 5–8 and all of Black’s pieces are hidden in fog.',
-                     14, 500, GREY, w=8 * S0, lineHeight=1.3))
-    ry = by + 8 * S0 + 90
+    ry = by + 8 * S0 + 40
     kids.append(text('Real position label', bx, ry, 'Real position: every piece, no fog', 18, 600, CHAR))
     kids.append(group('Real position', board_nodes(bx, ry + 34, S0, p0, False, 'start-real-board', theme=BLUE),
                       id='start-real'))
