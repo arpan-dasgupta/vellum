@@ -12,7 +12,7 @@ import os
 
 FILES = 'abcdefgh'
 HERE = os.path.dirname(os.path.abspath(__file__))
-SAMPLE_VERSION = 6  # bump when the sample changes, so the editor offers the new version
+SAMPLE_VERSION = 8  # bump when the sample changes, so the editor offers the new version
 OUT = os.path.join(HERE, '..', 'samples', 'fog-of-war.json')
 
 # ---------- chess logic (pseudo-legal moves, no check: Fog of War rules) ----------
@@ -91,6 +91,58 @@ def visible(board, side, moved):
                     if t and t[0] == opp:
                         vis.add(name(f + df, r + d))
     return vis
+
+
+def pseudo_moves(board, side):
+    """Pseudo-legal moves (Fog of War has no check), as (from, to, piece, capture)."""
+    out = []
+    opp = 'b' if side == 'w' else 'w'
+    dirs = {'B': [(1, 1), (1, -1), (-1, 1), (-1, -1)], 'R': [(1, 0), (-1, 0), (0, 1), (0, -1)]}
+    dirs['Q'] = dirs['B'] + dirs['R']
+    ok = lambda f, r: 0 <= f < 8 and 1 <= r <= 8
+    for s_, (c, p) in board.items():
+        if c != side:
+            continue
+        f, r = sq(s_)
+        if p in 'BRQ':
+            for df, dr in dirs[p]:
+                x, y = f + df, r + dr
+                while ok(x, y):
+                    t = board.get(name(x, y))
+                    if t and t[0] == side:
+                        break
+                    out.append((s_, name(x, y), p, bool(t)))
+                    if t:
+                        break
+                    x += df
+                    y += dr
+        elif p in 'NK':
+            steps = ([(1, 2), (2, 1), (-1, 2), (-2, 1), (1, -2), (2, -1), (-1, -2), (-2, -1)] if p == 'N'
+                     else [(a, b) for a in (-1, 0, 1) for b in (-1, 0, 1) if a or b])
+            for df, dr in steps:
+                x, y = f + df, r + dr
+                if ok(x, y) and (not board.get(name(x, y)) or board[name(x, y)][0] == opp):
+                    out.append((s_, name(x, y), p, bool(board.get(name(x, y)))))
+        elif p == 'P':
+            d = 1 if side == 'w' else -1
+            st = 2 if side == 'w' else 7
+            if ok(f, r + d) and name(f, r + d) not in board:
+                out.append((s_, name(f, r + d), p, False))
+                if r == st and name(f, r + 2 * d) not in board:
+                    out.append((s_, name(f, r + 2 * d), p, False))
+            for df in (-1, 1):
+                t = board.get(name(f + df, r + d)) if ok(f + df, r + d) else None
+                if t and t[0] == opp:
+                    out.append((s_, name(f + df, r + d), p, True))
+    return out
+
+
+def san(move, moves):
+    fr, to, p, cap = move
+    if p == 'P':
+        return (fr[0] + 'x' + to) if cap else to
+    rivals = [m for m in moves if m[2] == p and m[1] == to and m[0] != fr]
+    return p + (fr[0] if rivals else '') + ('x' if cap else '') + to
 
 
 PLIES = [('e2', 'e4', '1. e4'), ('g8', 'f6', '1… Nf6'), ('b1', 'c3', '2. Nc3'), ('d7', 'd6', '2… d6'),
@@ -282,6 +334,7 @@ def arrow(from_id, to_id, label, hidden, gap=0, width=3, show_label=False):
 
 
 PREDICT = '#D97706'  # amber, for the next-state prediction arcs
+CONTEXT = '#0D9488'  # teal, for the context rail carrying earlier states into each embedding
 
 
 def prediction_arc(from_id, to_id, k):
@@ -359,7 +412,10 @@ FOG_TOP = 300    # the fogged row sits lower, leaving room for the prediction ar
 EMB_GAP = 150    # from the bottom of a fogged board to its embedding vector (room for the context arrows)
 REAL_GAP = 230   # from the bottom of a fogged board to the real-position label below it
 MOVE_GAP = 20    # space between a move arrow and the boards it joins
-MOVE_ICON = 60   # size of the moved piece drawn above a White move arrow
+MOVE_ICON = 80   # size of the moved piece drawn above a White move arrow
+BRACE_W, BRACE_H = 460, 40   # the brace under each hidden move, where its possible moves will go
+BRACE_GAP = 70               # from the bottom of the real-position boards to the braces
+POSSIBLE_SPACE = 150         # room left under each brace for the possible moves
 MOVE_PIECE = {'1. e4': 'P', '2. Nc3': 'N', '3. Bb5': 'B', '4. Bxe8': 'B'}  # the White piece that moved
 HEAD_W = {'1…': 33.1, '2…': 37.9, '3…': 37.7}  # measured Inter Semi Bold 24px widths
 REAL_LABELS = ['Real position: start', 'Real position after 1. e4', 'Real position after 1… Nf6',
@@ -421,7 +477,15 @@ def sequence_section(title, intro, move_line, texts, fogged, prefix):
         hidden = k % 2 == 1
         a = arrow(board_ids[k], board_ids[k + 1], labels[k], hidden, gap=MOVE_GAP, width=5, show_label=not hidden)
         if hidden:
-            kids.append(a)
+            # An unknown move drops down into a brace that will hold its possible moves.
+            gcx = SEQ_X + PAD + k * (BW + GAP) + BW + GAP / 2
+            by_ = SEQ_Y + top + 44 + BW + REAL_GAP + 34 + BW + BRACE_GAP
+            br = brace(f'Possible moves for {labels[k]}', gcx - BRACE_W / 2, by_)
+            down = {'id': nid('c'), 'type': 'CONNECTOR', 'name': 'Into possible moves',
+                    'from': {'id': a['id'], 'side': 'CENTER'}, 'to': {'id': br['id'], 'side': 'TOP'},
+                    'gap': [8, 6], 'stroke': GREY, 'strokeWidth': 3, 'dash': '12 7', 'headSize': 16, 'arrow': True}
+            row = possible_moves_row(pos[k], PLIES[k][:2], gcx, by_ + BRACE_H + 18)
+            kids.append(group(f'Hidden move {labels[k]}', [a, down, br, row]))
             continue
         # White moves carry the moving piece above the arrow.
         mid_x = SEQ_X + PAD + k * (BW + GAP) + BW + GAP / 2
@@ -432,17 +496,64 @@ def sequence_section(title, intro, move_line, texts, fogged, prefix):
         kids.append(group(f'Move {labels[k]}', [a, pc]))
     if fogged:
         kids.append(group('Next-state predictions', [prediction_arc(board_ids[k], board_ids[k + 1], k) for k in range(7)]))
-        # Context: the embedding at i also draws on the states before it, shown as an arrow
-        # from the previous board into this column's vector.
-        kids.append(group('Context arrows', [
-            {'id': nid('c'), 'type': 'CONNECTOR', 'name': f'Context into embedding {k} (states 0–{k - 1})',
-             'from': {'id': board_ids[k - 1], 'side': 'BOTTOM'}, 'to': {'id': f'{prefix}-embedding-{k}', 'side': 'TOP', 'at': 0.4},
-             'gap': [10, 10], 'stroke': CHAR, 'strokeWidth': 3, 'arrow': True}
-            for k in range(1, 8)]))
+        # Context rail: each column's board-to-embedding line branches right into a shared rail,
+        # and the rail merges down into every later column's line, so the embedding at i draws on
+        # all the states before it. Straight runs with rounded corners.
+        kids.append(context_rail(SEQ_X + PAD, SEQ_Y + top + 44 + BW))
     w = PAD * 2 + 8 * BW + 7 * GAP
-    h = (top + 44 + BW + REAL_GAP + 34 + BW + PAD) if fogged else (top + 44 + BW + PAD)
+    h = (top + 44 + BW + REAL_GAP + 34 + BW + BRACE_GAP + BRACE_H + POSSIBLE_SPACE) if fogged else (top + 44 + BW + PAD)
     return section('Fog of War — 7-move sequence' if fogged else 'Real positions', SEQ_X, SEQ_Y, w, h, kids,
                    id=f'{prefix}-section')
+
+
+def brace(name, x, y):
+    """A horizontal curly brace opening downward: tip up at the centre, ends curling down."""
+    w, h, t, r = BRACE_W, BRACE_H, 16, 22
+    m = w / 2
+    d = (f'M0,{h} Q0,{t} {r},{t} H{m - r} Q{m},{t} {m},0 Q{m},{t} {m + r},{t} H{w - r} Q{w},{t} {w},{h}')
+    return {'id': nid('pc'), 'type': 'PATH', 'name': name, 'x': x, 'y': y, 'w': w, 'h': h, 'vw': w, 'vh': h,
+            'fill': None, 'stroke': GREY, 'detail': GREY, 'strokeWidth': 3, 'paths': [{'role': 'ink', 'd': d}]}
+
+
+def possible_moves_row(before, played, cx, y):
+    """A few of Black's possible moves with their pieces, the move actually played in the middle and
+    a little bigger, and an ellipsis at each end for the moves not shown."""
+    moves = sorted(pseudo_moves(before['board'], 'b'), key=lambda m: ('KQRBNP'.index(m[2]), m[0], m[1]))
+    real = next(m for m in moves if (m[0], m[1]) == tuple(played))
+    others = [m for m in moves if m is not real]
+    pick = [others[round(i * (len(others) - 1) / 3)] for i in range(4)]  # spread across the list
+    shown = pick[:2] + [real] + pick[2:]
+    slot, small, big = 76, 44, 58
+    total = len(shown) * slot
+    x0 = cx - total / 2
+    nodes = [text('More moves', x0 - 30, y + 8, '…', 28, 600, GREY),
+             text('More moves', x0 + total + 6, y + 8, '…', 28, 600, GREY)]
+    for i, m in enumerate(shown):
+        is_real = m is real
+        size = big if is_real else small
+        mx = x0 + i * slot + slot / 2
+        pc = piece('b', m[2], m[1], mx - size / 2, y + (big - size) / 2, size)
+        pc['name'] = ('Played: ' if is_real else 'Possible: ') + san(m, moves)
+        lab = text('Move', mx - slot / 2, y + big + 4, san(m, moves), 15 if is_real else 13, 700 if is_real else 500,
+                   CHAR if is_real else GREY, w=slot, align='center')
+        nodes += [pc, lab]
+    return group(f'Possible moves ({len(moves)} in all)', nodes)
+
+
+def context_rail(x0, board_bottom):
+    rail_y = board_bottom + EMB_GAP * 0.48
+    r = 20
+    cx = [x0 + k * (BW + GAP) + BW / 2 for k in range(8)]
+    left, top = cx[0], rail_y - r
+    d = ''
+    for k in range(7):
+        a, b = cx[k] - left, cx[k + 1] - left
+        # Leave column k's line, run right, and merge down into column k+1's line.
+        d += (f'M{a:.1f},0 Q{a:.1f},{r} {a + r:.1f},{r} H{b - r:.1f} Q{b:.1f},{r} {b:.1f},{2 * r} ')
+    w, h = cx[-1] - left, 2 * r
+    return {'id': nid('pc'), 'type': 'PATH', 'name': 'Context rail (each embedding draws on all earlier states)',
+            'x': left, 'y': top, 'w': w, 'h': h, 'vw': w, 'vh': h, 'fill': None, 'stroke': CONTEXT, 'detail': CONTEXT,
+            'strokeWidth': 3, 'paths': [{'role': 'ink', 'd': d.strip()}]}
 
 
 def start_section():
