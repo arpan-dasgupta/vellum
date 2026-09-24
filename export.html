@@ -23,6 +23,44 @@ async function save(name, data) {
   const r = await fetch('/save?name=' + encodeURIComponent(name), { method: 'POST', body: data });
   if (!r.ok) throw new Error(`${name}: ${r.status}`);
 }
+// Review: render each open annotation over the document, one image per annotation, so its
+// drawing can be understood visually before acting on it.
+//   export.html?preset=review&ann=.tmp/ann.json   (ann = an annotations document from the artifact database)
+async function review(doc, ctx, fontCss, q) {
+  const ann = await (await fetch(q.get('ann') || '.tmp/ann.json')).json();
+  const pg = doc.pages.find((p) => p.id === ann.pageId) || doc.pages[0];
+  const strip = (n) => { const c = { ...n }; delete c.about; if (c.children) c.children = c.children.map(strip); return c; };
+  const items = ann.items.map(strip);
+  pg.children = pg.children.filter((n) => !(n.type === 'GROUP' && n.annotation));
+  const group = { id: 'ann-review', type: 'GROUP', name: 'Annotations', annotation: true, children: items };
+  pg.children.push(group);
+  ctx.index = VellumCore.buildIndex(doc);
+  const open = items.filter((n) => n.status !== 'resolved');
+  const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const run = Date.now().toString(36);  // unique names per run, so image viewers never show a stale copy
+  const overview = VellumCore.exportSVG(pg.children, ctx, { padding: 20, background: '#FFFFFF', fontCss });
+  await save(`_review-${run}-overview.png`, await VellumCore.svgToPng(overview, 0.5));
+  log(`overview: ${open.length} open annotation(s)`);
+  for (const n of open) {
+    const b = VellumCore.bounds(n, ctx);
+    const pad = 200;
+    const crop = { x: b.x - pad, y: b.y - pad - 40, w: b.w + pad * 2, h: b.h + pad * 2 + 40 };
+    // Show only this annotation, named above it, so other marks can't be confused with it.
+    const tag = { id: 'review-tag', type: 'TEXT', name: 'tag', x: b.x, y: b.y - 34, text: n.name, fontSize: 22, fontWeight: 700, color: '#C0262D', autoWidth: true };
+    // ?bare=1 renders the same crop without the annotation, to check the result underneath it.
+    group.children = q.get('bare') ? [] : [n, tag];
+    ctx.index = VellumCore.buildIndex(doc);
+    const svg = VellumCore.exportSVG(pg.children, ctx, { bounds: crop, background: '#FFFFFF', fontCss });
+    group.children = items;
+    const scale = Math.min(1.5, 2200 / Math.max(crop.w, crop.h));
+    const file = `_review-${run}-${slug(n.name)}${q.get('bare') ? '-bare' : ''}.png`;
+    await save(file, await VellumCore.svgToPng(svg, scale));
+    log(`${file}: ${Math.round(crop.w)} × ${Math.round(crop.h)} at ${scale.toFixed(2)}x`);
+  }
+  log('done');
+  document.body.dataset.done = '1';
+}
+
 (async () => {
   try {
     const q = new URLSearchParams(location.search);
@@ -32,6 +70,7 @@ async function save(name, data) {
     const ctx = { index: VellumCore.buildIndex(doc), measure: (t, f) => { c.font = f; return c.measureText(t).width; } };
     const fontCss = await VellumCore.embeddedFontCss();
     log(fontCss ? `embedded Inter (${Math.round(fontCss.length / 1024)} KB)` : 'could not embed Inter; using @import');
+    if (q.get('preset') === 'review') { await review(doc, ctx, fontCss, q); return; }
     const jobs = PRESETS[q.get('preset') || 'fow'];
     for (const j of jobs) {
       const nodes = j.nodes.map((id) => ctx.index.map.get(id));

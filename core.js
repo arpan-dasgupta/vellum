@@ -421,7 +421,7 @@
   function exportSVG(nodes, ctx, opts) {
     opts = opts || {};
     const vis = nodes.filter((n) => n.visible !== false);
-    const b = union(vis.map((n) => bounds(n, ctx))) || { x: 0, y: 0, w: 1, h: 1 };
+    const b = opts.bounds || union(vis.map((n) => bounds(n, ctx))) || { x: 0, y: 0, w: 1, h: 1 };
     const pad = opts.padding || 0;
     const x = b.x - pad, y = b.y - pad, w = b.w + pad * 2, h = b.h + pad * 2;
     let body = '';

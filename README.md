@@ -73,6 +73,15 @@ When Vellum runs as a published Claude artifact, each page's annotations sync to
 
 Each annotation is also a small thread. Select one to add follow-ups, then resolve it when the work is done; a follow-up on a resolved annotation reopens it. Resolved annotations are hidden from the canvas and from exports, and stay listed under Resolved in the side panel, where "Show on canvas" brings them back faded. In the shared data, items carry `status: "resolved"`, `resolvedBy` and a `replies` list of `{author, text, at}`, with `author` either `user` or `claude`, so Claude can post follow-ups and resolve items too.
 
+## Working on annotations with Claude
+
+1. Open the published Vellum and mark up what you want: sketch it with the pen, point with arrows and highlights, and write instructions in notes.
+2. Ask Claude to work on the annotations. It reviews each open annotation on its own, as an image, before changing anything.
+3. Claude replies on each annotation with what it changed and resolves it. If something is unclear, it asks on that annotation and leaves it open.
+4. To ask for more, add a follow-up on the annotation; that reopens it for the next round.
+
+The step-by-step process Claude follows is in `CLAUDE.md`.
+
 ## Code layout
 
 - `core.js` holds the document helpers, text layout, bounds, SVG rendering and export. It has no DOM dependency apart from an injected text measurer, so the editor and headless exporters share it.
