@@ -152,9 +152,20 @@
       case 'CONNECTOR': {
         const g = connectorGeom(n, ctx);
         if (!g) return null;
-        const b = union([{ x: g.p1.x, y: g.p1.y, w: 0, h: 0 }, { x: g.p2.x, y: g.p2.y, w: 0, h: 0 }, g.label]);
+        const b = union([{ x: g.p1.x, y: g.p1.y, w: 0, h: 0 }, { x: g.p2.x, y: g.p2.y, w: 0, h: 0 }, { x: g.mid.x, y: g.mid.y, w: 0, h: 0 }, g.label]);
         return b;
       }
+      case 'INK': {
+        let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity, r = 0;
+        for (const st of inkStrokes(n)) {
+          r = Math.max(r, (st.strokeWidth || n.strokeWidth || 4) / 2);
+          for (const [x, y] of st.points) { x1 = Math.min(x1, x); y1 = Math.min(y1, y); x2 = Math.max(x2, x); y2 = Math.max(y2, y); }
+        }
+        if (x1 === Infinity) return null;
+        return { x: x1 - r, y: y1 - r, w: x2 - x1 + 2 * r, h: y2 - y1 + 2 * r };
+      }
+      case 'STICKY':
+        return { x: n.x, y: n.y, w: n.w, h: stickyHeight(n, ctx) };
       default:
         return { x: n.x, y: n.y, w: n.w, h: n.h };
     }
@@ -162,7 +173,9 @@
 
   function center(b) { return { x: b.x + b.w / 2, y: b.y + b.h / 2 }; }
 
-  function anchorPoint(b, side, toward) {
+  function anchorPoint(b, side, toward, at, ep) {
+    const f = at == null ? 0.5 : at;
+    if (side === 'POINT' && ep) return { x: b.x + b.w * (ep.fx == null ? 0.5 : ep.fx), y: b.y + b.h * (ep.fy == null ? 0.5 : ep.fy) };
     let s = side || 'AUTO';
     if (s === 'AUTO') {
       const c = center(b);
@@ -170,10 +183,10 @@
       s = Math.abs(dx) * b.h >= Math.abs(dy) * b.w ? (dx >= 0 ? 'RIGHT' : 'LEFT') : (dy >= 0 ? 'BOTTOM' : 'TOP');
     }
     switch (s) {
-      case 'RIGHT': return { x: b.x + b.w, y: b.y + b.h / 2 };
-      case 'LEFT': return { x: b.x, y: b.y + b.h / 2 };
-      case 'TOP': return { x: b.x + b.w / 2, y: b.y };
-      case 'BOTTOM': return { x: b.x + b.w / 2, y: b.y + b.h };
+      case 'RIGHT': return { x: b.x + b.w, y: b.y + b.h * f };
+      case 'LEFT': return { x: b.x, y: b.y + b.h * f };
+      case 'TOP': return { x: b.x + b.w * f, y: b.y };
+      case 'BOTTOM': return { x: b.x + b.w * f, y: b.y + b.h };
       default: return center(b);
     }
   }
@@ -192,16 +205,62 @@
     const ba = endpointBounds(n.from, ctx);
     const bb = endpointBounds(n.to, ctx);
     if (!ba || !bb) return null;
-    const p1 = anchorPoint(ba, n.from.side, center(bb));
-    const p2 = anchorPoint(bb, n.to.side, center(ba));
+    let p1 = anchorPoint(ba, n.from.side, center(bb), n.from.at, n.from);
+    let p2 = anchorPoint(bb, n.to.side, center(ba), n.to.at, n.to);
+    // `bend` lifts the middle of the line into a curve (positive bends up for left-to-right lines).
+    const dx = p2.x - p1.x, dy = p2.y - p1.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len, uy = dy / len;
+    const c = n.bend ? { x: (p1.x + p2.x) / 2 + uy * n.bend * 2, y: (p1.y + p2.y) / 2 - ux * n.bend * 2 } : null;
+    // `gap` leaves space between each end and the layer it attaches to.
+    const [g1, g2] = Array.isArray(n.gap) ? n.gap : [n.gap || 0, n.gap || 0];
+    const unit = (a, b) => { const l = Math.hypot(b.x - a.x, b.y - a.y) || 1; return { x: (b.x - a.x) / l, y: (b.y - a.y) / l }; };
+    if (g1) { const t = unit(p1, c || p2); p1 = { x: p1.x + t.x * g1, y: p1.y + t.y * g1 }; }
+    if (g2) { const t = unit(c || p1, p2); p2 = { x: p2.x - t.x * g2, y: p2.y - t.y * g2 }; }
+    const mid = c ? { x: 0.25 * p1.x + 0.5 * c.x + 0.25 * p2.x, y: 0.25 * p1.y + 0.5 * c.y + 0.25 * p2.y } : { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
     let label = null;
     if (n.label) {
       const L = layoutText(labelNode(n), ctx.measure);
       const w = L.width + 20, h = L.height + 8;
-      const m = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
-      label = { x: m.x - w / 2, y: m.y - h / 2, w, h, L };
+      label = { x: mid.x - w / 2, y: mid.y - h / 2, w, h, L };
     }
-    return { p1, p2, label };
+    return { p1, p2, c, mid, label };
+  }
+
+  const STICKY_PAD = 14;
+  function stickyText(n) {
+    const sig = [n.text, n.w, n.fontSize, n.color].join('\u0000');
+    if (!n._stickyText || n._stickyText._sig !== sig) {
+      Object.defineProperty(n, '_stickyText', {
+        value: { type: 'TEXT', text: n.text || '', fontSize: n.fontSize || 16, fontWeight: 500, autoWidth: false,
+          w: Math.max(10, n.w - STICKY_PAD * 2), lineHeight: 1.35, color: n.color || '#1E1E1E', _sig: sig },
+        enumerable: false, configurable: true, writable: true,
+      });
+    }
+    return n._stickyText;
+  }
+  function stickyHeight(n, ctx) {
+    const L = layoutText(stickyText(n), ctx.measure);
+    return Math.max(n.h || 0, L.height + STICKY_PAD * 2);
+  }
+  // An INK node holds one or more strokes: `strokes: [{points, stroke?, strokeWidth?}]`.
+  // Older single-stroke nodes use `points` directly.
+  function inkStrokes(n) {
+    if (n.strokes) return n.strokes;
+    return n.points ? [{ points: n.points }] : [];
+  }
+  function inkPath(points) {
+    if (!points.length) return '';
+    const f = (v) => r2(v);
+    if (points.length < 3) return `M${f(points[0][0])},${f(points[0][1])} L${points.map(([x, y]) => `${f(x)},${f(y)}`).join(' ')}`;
+    let d = `M${f(points[0][0])},${f(points[0][1])}`;
+    for (let i = 1; i < points.length - 1; i++) {
+      const [x, y] = points[i];
+      const [nx, ny] = points[i + 1];
+      d += ` Q${f(x)},${f(y)} ${f((x + nx) / 2)},${f((y + ny) / 2)}`;
+    }
+    const last = points[points.length - 1];
+    return d + ` L${f(last[0])},${f(last[1])}`;
   }
 
   function labelNode(n) {
@@ -252,9 +311,13 @@
 
   function renderNode(n, ctx, opts) {
     if (n.visible === false) return '';
+    // Resolved annotations are hidden unless the editor asks to show them faded.
+    const resolved = n.status === 'resolved';
+    if (resolved && opts.resolved !== 'fade') return '';
     const inner = renderInner(n, ctx, opts);
     if (!inner) return '';
-    const op = n.opacity != null && n.opacity < 1 ? ` opacity="${r2(n.opacity)}"` : '';
+    const o = (n.opacity == null ? 1 : n.opacity) * (resolved ? 0.3 : 1);
+    const op = o < 1 ? ` opacity="${r2(o)}"` : '';
     if (opts.forExport) {
       if (CONTAINER.has(n.type)) return `<g id="${esc(safeId(n))}"${op}>${inner}</g>`;
       return op ? `<g${op}>${inner}</g>` : inner;
@@ -290,6 +353,18 @@
         }
         return `<g transform="translate(${r2(n.x)} ${r2(n.y)}) scale(${r2(sx * 1000) / 1000} ${r2(sy * 1000) / 1000})">${body}</g>`;
       }
+      case 'INK':
+        return inkStrokes(n).filter((st) => st.points && st.points.length).map((st) =>
+          `<path d="${inkPath(st.points)}" fill="none" stroke="${esc(st.stroke || n.stroke || '#E8503A')}" stroke-width="${r2(st.strokeWidth || n.strokeWidth || 4)}" stroke-linecap="round" stroke-linejoin="round"/>`).join('');
+      case 'STICKY': {
+        const h = stickyHeight(n, ctx);
+        const tn = stickyText(n);
+        const L = layoutText(tn, ctx.measure);
+        let out = `<rect x="${r2(n.x)}" y="${r2(n.y + 3)}" width="${r2(n.w)}" height="${r2(h)}" rx="6" fill="#000000" fill-opacity="0.08"/>`;
+        out += `<rect x="${r2(n.x)}" y="${r2(n.y)}" width="${r2(n.w)}" height="${r2(h)}" rx="6" fill="${esc(n.fill || '#FFECBD')}"/>`;
+        if (n.text) out += textSvg(tn, ctx, n.x + STICKY_PAD, n.y + STICKY_PAD, L, 'left', L.width);
+        return out;
+      }
       case 'GROUP':
         return n.children.map((c) => renderNode(c, ctx, opts)).join('');
       case 'SECTION': {
@@ -300,17 +375,21 @@
       case 'CONNECTOR': {
         const g = connectorGeom(n, ctx);
         if (!g) return '';
-        const { p1, p2 } = g;
+        const { p1, p2, c } = g;
         const sw = n.strokeWidth || 2;
         const col = n.stroke || '#1E1E1E';
-        const dx = p2.x - p1.x, dy = p2.y - p1.y;
+        // Arrowhead direction follows the line's tangent at the end.
+        const from = c || p1;
+        const dx = p2.x - from.x, dy = p2.y - from.y;
         const len = Math.hypot(dx, dy) || 1;
         const ux = dx / len, uy = dy / len;
-        const ah = n.arrow === false ? 0 : Math.max(10, sw * 4);
+        const ah = n.arrow === false ? 0 : (n.headSize || Math.max(10, sw * 4));
         const aw = ah * 0.9;
         const end = { x: p2.x - ux * ah * 0.85, y: p2.y - uy * ah * 0.85 };
         const dash = n.dash ? ` stroke-dasharray="${n.dash === true ? `${sw * 3.4} ${sw * 2}` : esc(n.dash)}"` : '';
-        let s = `<line x1="${r2(p1.x)}" y1="${r2(p1.y)}" x2="${r2(end.x)}" y2="${r2(end.y)}" stroke="${esc(col)}" stroke-width="${r2(sw)}"${dash}/>`;
+        let s = c
+          ? `<path d="M${r2(p1.x)},${r2(p1.y)} Q${r2(c.x)},${r2(c.y)} ${r2(end.x)},${r2(end.y)}" fill="none" stroke="${esc(col)}" stroke-width="${r2(sw)}" stroke-linecap="round"${dash}/>`
+          : `<line x1="${r2(p1.x)}" y1="${r2(p1.y)}" x2="${r2(end.x)}" y2="${r2(end.y)}" stroke="${esc(col)}" stroke-width="${r2(sw)}"${dash}/>`;
         if (ah) {
           const bx = p2.x - ux * ah, by = p2.y - uy * ah;
           const px = -uy * aw / 2, py = ux * aw / 2;
@@ -322,7 +401,11 @@
           s += textSvg(labelNode(n), ctx, lb.x, lb.y + 4, lb.L, 'center', lb.w);
         }
         // A fat invisible line makes thin connectors easy to click in the editor.
-        if (!opts.forExport) s += `<line x1="${r2(p1.x)}" y1="${r2(p1.y)}" x2="${r2(p2.x)}" y2="${r2(p2.y)}" stroke="transparent" stroke-width="${r2(Math.max(12, sw * 4))}"/>`;
+        if (!opts.forExport) {
+          s += c
+            ? `<path d="M${r2(p1.x)},${r2(p1.y)} Q${r2(c.x)},${r2(c.y)} ${r2(p2.x)},${r2(p2.y)}" fill="none" stroke="transparent" stroke-width="${r2(Math.max(12, sw * 4))}"/>`
+            : `<line x1="${r2(p1.x)}" y1="${r2(p1.y)}" x2="${r2(p2.x)}" y2="${r2(p2.y)}" stroke="transparent" stroke-width="${r2(Math.max(12, sw * 4))}"/>`;
+        }
         return s;
       }
       default:
@@ -401,6 +484,12 @@
   /* ---------- mutation helpers ---------- */
 
   function moveNode(n, dx, dy) {
+    if (n.type === 'INK') {
+      const shift = (pts) => pts.map(([x, y]) => [x + dx, y + dy]);
+      if (n.strokes) n.strokes = n.strokes.map((st) => ({ ...st, points: shift(st.points) }));
+      if (n.points) n.points = shift(n.points);
+      return;
+    }
     if (n.type === 'CONNECTOR') {
       if (n.from && !n.from.id) { n.from.x += dx; n.from.y += dy; }
       if (n.to && !n.to.id) { n.to.x += dx; n.to.y += dy; }
@@ -431,8 +520,8 @@
   }
 
   root.VellumCore = {
-    DEFAULT_FONT, FONT_IMPORT, CONTAINER,
+    DEFAULT_FONT, FONT_IMPORT, CONTAINER, STICKY_PAD,
     esc, buildIndex, walk, layoutText, clearTextCache, plainText, fontCss, bounds, union, center,
-    connectorGeom, renderNode, renderList, exportSVG, embeddedFontCss, svgToPng, moveNode, newId, cloneWithNewIds,
+    connectorGeom, stickyText, inkStrokes, renderNode, renderList, exportSVG, embeddedFontCss, svgToPng, moveNode, newId, cloneWithNewIds,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

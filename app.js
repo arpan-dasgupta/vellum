@@ -7,8 +7,17 @@
   const STORE_KEY = 'vellum:doc:v1';
   const THEME_KEY = 'vellum:theme';
   const SAMPLE_URL = 'samples/fog-of-war.json';
-  const RESIZABLE = new Set(['RECT', 'ELLIPSE', 'PATH', 'SECTION', 'TEXT']);
-  const TYPE_LABEL = { RECT: 'Rectangle', ELLIPSE: 'Ellipse', TEXT: 'Text', PATH: 'Vector', GROUP: 'Group', SECTION: 'Section', CONNECTOR: 'Connector' };
+  const RESIZABLE = new Set(['RECT', 'ELLIPSE', 'PATH', 'SECTION', 'TEXT', 'STICKY']);
+  const TYPE_LABEL = { RECT: 'Rectangle', ELLIPSE: 'Ellipse', TEXT: 'Text', PATH: 'Vector', GROUP: 'Group', SECTION: 'Section', CONNECTOR: 'Connector', INK: 'Drawing', STICKY: 'Note' };
+  const ANN_COLORS = [
+    { name: 'Red', v: '#E8503A', note: '#FFCDC2' },
+    { name: 'Orange', v: '#F59E0B', note: '#FFE0C2' },
+    { name: 'Yellow', v: '#EAB308', note: '#FFECBD' },
+    { name: 'Green', v: '#2EA043', note: '#CDF4D3' },
+    { name: 'Blue', v: '#2F6FEB', note: '#C2E5FF' },
+  ];
+  const COLOR_KEY = 'vellum:ann-color';
+  const RESOLVED_KEY = 'vellum:show-resolved';
 
   /* ---------------- state ---------------- */
   const S = {
@@ -17,8 +26,14 @@
     view: { x: 0, y: 0, z: 1 }, views: {},
     hover: null, expanded: new Set(), editing: null,
     past: [], future: [], clipboard: null, pasteCount: 0,
-    spaceDown: false, drag: null,
+    spaceDown: false, drag: null, annColor: ANN_COLORS[0].v,
   };
+  try { const c = localStorage.getItem(COLOR_KEY); if (c && ANN_COLORS.some((x) => x.v === c)) S.annColor = c; } catch (e) { /* convenience only */ }
+  S.showResolved = false;
+  try { S.showResolved = localStorage.getItem(RESOLVED_KEY) === '1'; } catch (e) { /* convenience only */ }
+  const isResolved = (n) => n && n.status === 'resolved';
+  const hiddenResolved = (n) => isResolved(n) && !S.showResolved;
+  const isAnnGroup = (n) => !!(n && n.type === 'GROUP' && n.annotation);
 
   const svg = $('#canvas');
   const content = $('#content');
@@ -116,6 +131,7 @@
     if (S.ctxId && !node(S.ctxId)) S.ctxId = null;
     renderAll();
     scheduleSave();
+    schedulePush();
   }
   let saveTimer = 0;
   function scheduleSave() {
@@ -127,7 +143,7 @@
 
   /* ---------------- rendering ---------------- */
   function renderContent() {
-    content.innerHTML = C.renderList(page().children, ctx(), {});
+    content.innerHTML = C.renderList(page().children, ctx(), { resolved: S.showResolved ? 'fade' : 'hide' });
     if (S.editing) {
       const el = content.querySelector(`[data-id="${CSS.escape(S.editing)}"]`);
       if (el) el.style.visibility = 'hidden';
@@ -176,6 +192,20 @@
       s += `<text class="sec-label${on ? ' on' : ''}" data-sec="${esc(sec.id)}" x="${sec.x}" y="${sec.y - 7 * px}" font-size="${12 * px}">${esc(label)}</text>`;
     });
 
+    // Reply counts and resolved ticks on annotations.
+    for (const n of annNodes()) {
+      if (hiddenResolved(n) || n.visible === false) continue;
+      const replies = (n.replies || []).length;
+      if (!replies && !isResolved(n)) continue;
+      const b = bnds(n);
+      if (!b) continue;
+      const r = 9 * px, cx = b.x + b.w, cy = b.y;
+      s += `<circle class="badge-dot${isResolved(n) ? ' ok' : ''}" cx="${cx}" cy="${cy}" r="${r}" stroke-width="${2 * px}"/>`;
+      s += isResolved(n)
+        ? `<path d="M${cx - 4 * px},${cy} l${3 * px},${3 * px} l${5 * px},${-6 * px}" fill="none" stroke="#FFFFFF" stroke-width="${2 * px}" stroke-linecap="round" stroke-linejoin="round"/>`
+        : `<text class="badge-num" x="${cx}" y="${cy + 3.8 * px}" font-size="${11 * px}" text-anchor="middle">${replies}</text>`;
+    }
+
     if (S.hover && !S.sel.includes(S.hover) && node(S.hover) && !(d && d.kind === 'move')) {
       const b = bnds(node(S.hover));
       if (b) s += box(b, 'hover-box', ' stroke-width="1.5"');
@@ -219,6 +249,18 @@
       if (d.kind === 'marquee') s += box(b, 'marquee', ' stroke-width="1"');
       else if (d.type === 'ELLIPSE') s += `<ellipse class="preview" cx="${b.x + b.w / 2}" cy="${b.y + b.h / 2}" rx="${b.w / 2}" ry="${b.h / 2}" vector-effect="non-scaling-stroke" stroke-width="1"/>`;
       else s += box(b, 'preview', ' stroke-width="1"');
+    }
+    if (d && d.kind === 'ink' && d.pts.length) {
+      const tmp = { type: 'INK', points: d.pts, stroke: d.color, strokeWidth: 5 };
+      s += C.renderNode(tmp, ctx(), { forExport: true });
+    }
+    if (d && d.kind === 'hl' && d.moved) {
+      const hb = rectFrom(d.p0, d.p1);
+      s += C.renderNode({ type: 'RECT', ...hb, fill: S.annColor, fillOpacity: 0.3, radius: 4 }, ctx(), { forExport: true });
+    }
+    if (d && d.kind === 'annArrow' && d.moved) {
+      const tmp = { type: 'CONNECTOR', from: { x: d.p0.x, y: d.p0.y }, to: { x: d.p1.x, y: d.p1.y }, stroke: S.annColor, strokeWidth: 9, headSize: 26, opacity: 0.85, arrow: true };
+      s += C.renderNode(tmp, ctx(), { forExport: true });
     }
     if (d && d.kind === 'connect') {
       const from = node(d.from);
@@ -268,7 +310,7 @@
       if (i >= 0) start = i + 1;
     }
     for (let i = start; i < chain.length; i++) {
-      if (chain[i].type === 'SECTION') continue;
+      if (chain[i].type === 'SECTION' || isAnnGroup(chain[i])) continue;
       return chain[i];
     }
     return null;
@@ -293,7 +335,7 @@
     renderChrome();
   }
   function ctxForNode(id) {
-    const chain = chainTo(id).slice(0, -1).filter((n) => n.type === 'GROUP');
+    const chain = chainTo(id).slice(0, -1).filter((n) => n.type === 'GROUP' && !n.annotation);
     return chain.length ? chain[chain.length - 1].id : null;
   }
 
@@ -327,6 +369,13 @@
       e.preventDefault();
       return;
     }
+    if (e.button === 2) {
+      if (S.editing) commitEdit();
+      svg.setPointerCapture(e.pointerId);
+      startAnnArrow(toWorld(e), true, e.altKey);
+      e.preventDefault();
+      return;
+    }
     if (e.button !== 0) return;
     if (S.editing) commitEdit();
     // Detect double-clicks from two quick presses: re-rendering between clicks stops the browser's dblclick.
@@ -354,6 +403,10 @@
       return;
     }
     if (S.tool === 'text') { e.preventDefault(); createText(p); return; }
+    if (S.tool === 'pen') { S.drag = { kind: 'ink', pts: [[p.x, p.y]], color: S.annColor }; return; }
+    if (S.tool === 'arrow') { startAnnArrow(p, false, e.altKey); return; }
+    if (S.tool === 'mark') { S.drag = { kind: 'hl', p0: p, p1: p, moved: false }; return; }
+    if (S.tool === 'note') { e.preventDefault(); createNote(p); return; }
     const leaf = hitLeaf(e);
     if (S.tool === 'connector') {
       const t = leaf && resolve(leaf, e.metaKey || e.ctrlKey);
@@ -388,6 +441,7 @@
     if (t !== S.hover) { S.hover = t; renderOverlay(); }
   });
   svg.addEventListener('pointerleave', () => { if (!S.drag && S.hover) { S.hover = null; renderOverlay(); } });
+  svg.addEventListener('contextmenu', (e) => e.preventDefault());
 
   window.addEventListener('pointermove', (e) => {
     if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -434,6 +488,25 @@
       }
       case 'create':
         d.p1 = e.shiftKey ? squareFrom(d.p0, p) : p;
+        renderOverlay();
+        break;
+      case 'ink': {
+        const last = d.pts[d.pts.length - 1];
+        if (Math.hypot(p.x - last[0], p.y - last[1]) * S.view.z >= 2) { d.pts.push([p.x, p.y]); renderOverlay(); }
+        break;
+      }
+      case 'annArrow': {
+        if (Math.hypot(p.x - d.raw.x, p.y - d.raw.y) * S.view.z > 5) d.moved = true;
+        const e1 = arrowEnd(p, d.free || e.altKey);
+        d.to = e1.ep;
+        d.p1 = e1.p;
+        d.toId = e1.snapped;
+        renderOverlay();
+        break;
+      }
+      case 'hl':
+        d.p1 = p;
+        if (Math.hypot(p.x - d.p0.x, p.y - d.p0.y) * S.view.z > 4) d.moved = true;
         renderOverlay();
         break;
       case 'connect': {
@@ -486,6 +559,37 @@
         setTool('move');
         break;
       }
+      case 'ink': {
+        const pts = (d.pts.length > 1 ? d.pts : [d.pts[0], [d.pts[0][0] + 0.1, d.pts[0][1] + 0.1]]).map(([x, y]) => [round(x), round(y)]);
+        const st = { points: pts, stroke: d.color, strokeWidth: 5 };
+        const cur = sketchInfo();
+        if (cur && !isResolved(cur)) {
+          mutate(() => { cur.strokes = C.inkStrokes(cur).concat([st]); delete cur.points; S.sel = [cur.id]; });
+        } else {
+          const n = { id: C.newId(), type: 'INK', name: nextName('Sketch'), stroke: d.color, strokeWidth: 5, strokes: [st] };
+          addAnnotation(n);
+          S.sketchId = n.id;
+        }
+        renderChrome();
+        break;
+      }
+      case 'hl':
+        if (d.moved) {
+          const b = rectFrom(d.p0, d.p1);
+          addAnnotation({ id: C.newId(), type: 'RECT', name: nextName('Highlight'), ...b, fill: S.annColor, fillOpacity: 0.3, radius: 4 });
+        } else {
+          toggleMark(d.p0);
+        }
+        break;
+      case 'annArrow':
+        if (d.moved && !(d.fromId && d.fromId === d.toId)) {
+          addAnnotation({ id: C.newId(), type: 'CONNECTOR', name: nextName('Arrow'), from: d.from, to: d.to, stroke: S.annColor, strokeWidth: 9, headSize: 26, opacity: 0.85, arrow: true });
+        } else if (d.right) {
+          toggleMark(d.raw);
+        } else {
+          renderOverlay();
+        }
+        break;
       case 'connect':
         if (d.over) {
           const c = { id: C.newId(), type: 'CONNECTOR', name: nextName('Connector'), from: { id: d.from, side: 'AUTO' }, to: { id: d.over, side: 'AUTO' }, stroke: '#1E1E1E', strokeWidth: 2, arrow: true, label: '', labelSize: 14 };
@@ -508,7 +612,8 @@
     const list = S.ctxId && node(S.ctxId) ? node(S.ctxId).children : scope ? scope.children : page().children;
     const visit = (lst) => {
       for (const n of lst) {
-        if (n.visible === false || n.locked) continue;
+        if (n.visible === false || n.locked || hiddenResolved(n)) continue;
+        if (isAnnGroup(n)) { visit(n.children); continue; }
         const b = bnds(n);
         if (!b) continue;
         if (n.type === 'SECTION') {
@@ -535,7 +640,7 @@
       if (inner) setSel([inner.id]);
       return true;
     }
-    if (target.type === 'TEXT') { startEdit(target, false); return true; }
+    if (target.type === 'TEXT' || target.type === 'STICKY') { startEdit(target, false); return true; }
     return false;
   }
 
@@ -606,12 +711,433 @@
     startEdit(node(n.id), true);
   }
 
+  /* ---------------- annotations ---------------- */
+  // Annotations live in one "Annotations" group at the top of each page. The group is
+  // transparent to selection, and its contents sync to the artifact's shared database.
+  function annGroup(pg = page(), create = true) {
+    let g = pg.children.find(isAnnGroup);
+    if (!g && create) {
+      g = { id: 'ann-' + pg.id, type: 'GROUP', name: 'Annotations', annotation: true, children: [] };
+      pg.children.push(g);
+    }
+    return g;
+  }
+  const annNodes = (pg = page()) => { const g = annGroup(pg, false); return g ? g.children : []; };
+  const editText = (n) => (n.type === 'STICKY' ? n.text || '' : C.plainText(n));
+
+  function addAnnotation(n) {
+    mutate(() => {
+      const g = annGroup(page(), true);
+      // Keep the group on top of everything else on the page.
+      const list = page().children;
+      list.splice(list.indexOf(g), 1);
+      list.push(g);
+      if (g.visible === false) g.visible = true;
+      g.children.push(n);
+      S.sel = [n.id];
+    });
+  }
+
+  // Every visible, non-annotation leaf under a world point, with its ancestor chain.
+  function hitsAt(pt, pg = page()) {
+    const hits = [];
+    const visit = (list, chain) => {
+      for (const n of list) {
+        if (n.visible === false || isAnnGroup(n)) continue;
+        if (n.children) { visit(n.children, chain.concat(n)); continue; }
+        if (n.type === 'CONNECTOR') continue;
+        const b = bnds(n);
+        if (b && pt.x >= b.x && pt.x <= b.x + b.w && pt.y >= b.y && pt.y <= b.y + b.h) hits.push({ n, chain });
+      }
+    };
+    visit(pg.children, []);
+    return hits;
+  }
+  // The most specific layer under a point: the smallest one there, and among equal sizes the
+  // one underneath, which is usually the shape a mark is about rather than whatever sits on it.
+  function targetAt(pt, pg = page()) {
+    const hits = hitsAt(pt, pg);
+    let best = null;
+    for (const h of hits) {
+      const b = bnds(h.n);
+      const a = Math.max(1, b.w * b.h);
+      if (!best || a < best.a * 0.98) best = { h, a, b };
+    }
+    if (!best) return null;
+    return { n: best.h.n, chain: best.h.chain, b: best.b, above: hits.slice(hits.indexOf(best.h) + 1).reverse() };
+  }
+
+  function toggleMark(pt) {
+    const t = targetAt(pt);
+    if (!t) { toast('Nothing here to highlight. Drag with the highlight tool to mark an area.'); return; }
+    const existing = annNodes().find((n) => n.markOf === t.n.id);
+    if (existing) {
+      mutate(() => { const g = annGroup(); g.children = g.children.filter((n) => n !== existing); S.sel = []; });
+      return;
+    }
+    addAnnotation({ id: C.newId(), type: 'RECT', name: `Highlight “${t.n.name}”`, markOf: t.n.id, x: t.b.x, y: t.b.y, w: t.b.w, h: t.b.h, fill: S.annColor, fillOpacity: 0.5 });
+  }
+
+  // Where an annotation arrow's end attaches. Small layers snap to their centre; on a big
+  // layer the end stays where you let go but still moves with the layer. Alt gives a free end.
+  const frac = (v) => Math.round(v * 10000) / 10000;
+  function arrowEnd(pt, free) {
+    const t = free ? null : targetAt(pt);
+    if (!t) return { ep: { x: pt.x, y: pt.y }, p: pt, snapped: null };
+    if (Math.max(t.b.w, t.b.h) * S.view.z <= 96) return { ep: { id: t.n.id, side: 'CENTER' }, p: C.center(t.b), snapped: t.n.id };
+    return { ep: { id: t.n.id, side: 'POINT', fx: frac((pt.x - t.b.x) / t.b.w), fy: frac((pt.y - t.b.y) / t.b.h) }, p: pt, snapped: null };
+  }
+  function startAnnArrow(p, right, free) {
+    const e0 = arrowEnd(p, free);
+    S.drag = { kind: 'annArrow', right, free, raw: p, moved: false, p0: e0.p, p1: e0.p, from: e0.ep, fromId: e0.snapped, to: null, toId: null };
+  }
+
+  /* Sketch sessions: while the pen stays active, each stroke joins the same sketch. */
+  function sketchInfo() {
+    const n = S.sketchId && node(S.sketchId);
+    return n && n.type === 'INK' ? n : null;
+  }
+  function finishSketch() {
+    const n = sketchInfo();
+    setTool('move');
+    if (n) { setSel([n.id]); toast('Sketch saved. Add a follow-up if it needs words.'); }
+  }
+  function combineAnnotations() {
+    const items = topLevelSel().filter((n) => isAnnGroup(parentOf(n.id)));
+    if (items.length < 2) { toast('Select two or more annotations to combine them.'); return; }
+    const replies = items.flatMap((n) => n.replies || []).sort((a, b) => String(a.at).localeCompare(String(b.at)));
+    mutate(() => {
+      const list = annGroup().children;
+      const idx = items.map((n) => list.indexOf(n)).sort((a, b) => a - b);
+      let merged;
+      if (items.every((n) => n.type === 'INK')) {
+        merged = {
+          id: C.newId(), type: 'INK', name: nextName('Sketch'), stroke: items[0].stroke, strokeWidth: items[0].strokeWidth || 5,
+          strokes: items.flatMap((n) => C.inkStrokes(n).map((st) => ({ stroke: n.stroke, strokeWidth: n.strokeWidth, ...st }))),
+        };
+        if (items.every((n) => n.intent === 'mark')) merged.intent = 'mark';
+      } else {
+        merged = {
+          id: C.newId(), type: 'GROUP', name: nextName('Annotation set'),
+          children: items.map((n) => { delete n.replies; delete n.status; delete n.resolvedAt; delete n.resolvedBy; return n; }),
+        };
+        // A set that includes a "what I want" sketch keeps that meaning.
+        if (items.some((n) => n.type === 'INK' && intentOf(n) === 'mockup')) merged.intent = 'mockup';
+      }
+      if (replies.length) merged.replies = replies;
+      for (let i = idx.length - 1; i >= 0; i--) list.splice(idx[i], 1);
+      list.splice(idx[0], 0, merged);
+      S.sel = [merged.id];
+    });
+    toast('Combined into one annotation');
+  }
+
+  function createNote(p) {
+    const col = ANN_COLORS.find((c) => c.v === S.annColor) || ANN_COLORS[2];
+    const n = { id: C.newId(), type: 'STICKY', name: nextName('Note'), x: p.x, y: p.y, w: 220, h: 0, text: '', fill: col.note, fontSize: 16 };
+    addAnnotation(n);
+    setTool('move');
+    startEdit(node(n.id), true);
+  }
+
+  // Plain-language descriptions, so whoever reads the shared data knows what each mark points at.
+  function layerPath(n) {
+    const chain = chainTo(n.id).slice(0, -1).filter((a) => a.type !== 'SECTION' && !a.annotation).map((a) => a.name);
+    return chain.slice(-3).join(' › ');
+  }
+  function describePoint(pt, pg) {
+    const t = targetAt(pt, pg);
+    if (!t) return null;
+    const path = layerPath(t.n);
+    const above = t.above.slice(0, 2).map((h) => `“${h.n.name}”`);
+    return `“${t.n.name}”${path ? ` in ${path}` : ''}${above.length ? `, under ${above.join(' and ')}` : ''}`;
+  }
+  // Named groups an area overlaps, so a sketch or area highlight can be tied to what it sits on.
+  function regionOf(b, pg) {
+    const names = [];
+    const visit = (list) => {
+      for (const n of list) {
+        if (n.visible === false || isAnnGroup(n) || n.type === 'CONNECTOR') continue;
+        if (n.type === 'SECTION') { visit(n.children); continue; }
+        if (n.type !== 'GROUP') continue;
+        const nb = bnds(n);
+        if (nb && intersects(nb, b)) names.push(`“${n.name}”`);
+      }
+    };
+    visit(pg.children);
+    if (!names.length) return `empty canvas near ${nearestPanel(C.center(b), pg)}`;
+    return names.slice(0, 3).join(', ') + (names.length > 3 ? ` and ${names.length - 3} more` : '');
+  }
+  const intentOf = (n) => n.intent || (n.type === 'INK' ? 'mockup' : 'mark');
+  function nearestPanel(pt, pg) {
+    let best = null, bestD = Infinity;
+    const visit = (list) => {
+      for (const n of list) {
+        if (n.visible === false || isAnnGroup(n) || n.type === 'CONNECTOR') continue;
+        if (n.type === 'SECTION') { visit(n.children); continue; }
+        if (n.type !== 'GROUP') continue;
+        const b = bnds(n);
+        if (!b) continue;
+        const dx = Math.max(b.x - pt.x, 0, pt.x - (b.x + b.w)), dy = Math.max(b.y - pt.y, 0, pt.y - (b.y + b.h));
+        const d = Math.hypot(dx, dy);
+        if (d < bestD) { bestD = d; best = n; }
+      }
+    };
+    visit(pg.children);
+    return best ? `“${best.name}”` : 'the page';
+  }
+  function colourName(c) {
+    const hit = ANN_COLORS.find((x) => x.v.toLowerCase() === String(c || '').toLowerCase() || x.note.toLowerCase() === String(c || '').toLowerCase());
+    return hit ? hit.name.toLowerCase() : (c || 'uncoloured');
+  }
+  function describeNode(n, pg = page()) {
+    const b = bnds(n);
+    const size = b ? `${Math.round(b.w)} × ${Math.round(b.h)}` : '';
+    switch (n.type) {
+      case 'CONNECTOR': {
+        const g = C.connectorGeom(n, ctx());
+        if (!g) return `${colourName(n.stroke)} arrow`;
+        const a = describePoint(g.p1, pg) || `a point near ${nearestPanel(g.p1, pg)}`;
+        const z = describePoint(g.p2, pg) || `a point near ${nearestPanel(g.p2, pg)}`;
+        return `${colourName(n.stroke)} arrow from ${a} to ${z}`;
+      }
+      case 'RECT': {
+        const t = n.markOf && node(n.markOf);
+        if (t) return `${colourName(n.fill)} highlight on “${t.name}”${layerPath(t) ? ` in ${layerPath(t)}` : ''}`;
+        return `${colourName(n.fill)} highlighted area (${size}) over ${regionOf(b, pg)}`;
+      }
+      case 'STICKY':
+        return `note near ${nearestPanel({ x: b.x, y: b.y }, pg)}: “${(n.text || '').trim()}”`;
+      case 'INK': {
+        const k = C.inkStrokes(n).length;
+        const kind = intentOf(n) === 'mark' ? 'freehand mark' : 'sketch of what the user wants';
+        return `${colourName(n.stroke)} ${kind} (${k} stroke${k === 1 ? '' : 's'}, ${size}) over ${regionOf(b, pg)}`;
+      }
+      case 'GROUP':
+        return `set of ${n.children.length} annotations${intentOf(n) === 'mockup' ? ' showing what the user wants' : ''}: ${n.children.map((c) => describeNode(c, pg)).join('; ')}`;
+    }
+    return `${TYPE_LABEL[n.type] || n.type} “${n.name}” near ${b ? nearestPanel(C.center(b), pg) : 'the page'}`;
+  }
+
+  function ago(iso) {
+    const t = Date.parse(iso || '');
+    if (!t) return '';
+    const m = Math.round((Date.now() - t) / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return `${m} min ago`;
+    if (m < 60 * 24) return `${Math.round(m / 60)} h ago`;
+    return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+  const who = (r) => (r.author === 'claude' ? 'Claude' : 'You');
+
+  function setShowResolved(on) {
+    S.showResolved = on;
+    try { localStorage.setItem(RESOLVED_KEY, on ? '1' : '0'); } catch (e) { /* convenience only */ }
+    if (!on) S.sel = S.sel.filter((id) => !isResolved(node(id)));
+    renderContent(); renderOverlay(); renderLayers(); renderProps();
+  }
+
+  function resolveAnn(id, on) {
+    const n = node(id);
+    if (!n) return;
+    mutate(() => {
+      if (on) {
+        n.status = 'resolved';
+        n.resolvedAt = new Date().toISOString();
+        n.resolvedBy = 'user';
+        if (!S.showResolved) S.sel = S.sel.filter((x) => x !== id);
+      } else {
+        delete n.status; delete n.resolvedAt; delete n.resolvedBy;
+      }
+    });
+    toast(on ? (S.showResolved ? 'Resolved' : 'Resolved · find it under Resolved in the side panel') : 'Reopened');
+  }
+
+  function threadSection(n) {
+    const resolved = isResolved(n);
+    const msgs = [];
+    if (n.type === 'STICKY' && n.text) msgs.push(`<li class="msg"><b>Note</b><span>${esc(n.text)}</span></li>`);
+    for (const r of n.replies || []) {
+      msgs.push(`<li class="msg${r.author === 'claude' ? ' claude' : ''}"><b>${who(r)}<time>${esc(ago(r.at))}</time></b><span>${esc(r.text)}</span></li>`);
+    }
+    const status = resolved
+      ? `<span class="pill ok">Resolved${n.resolvedBy === 'claude' ? ' by Claude' : ''}</span>`
+      : '<span class="pill">Open</span>';
+    const intent = n.type === 'INK' || n.type === 'GROUP'
+      ? `<div class="seg" role="group" aria-label="What this shows"><button data-intent="mockup" aria-pressed="${intentOf(n) === 'mockup'}">What I want</button><button data-intent="mark" aria-pressed="${intentOf(n) === 'mark'}">Points at something</button></div>`
+      : '';
+    return section(`Annotation ${status}`, `${intent}<p class="help">${esc(describeNode(n))}</p>
+      ${msgs.length ? `<ul class="thread">${msgs.join('')}</ul>` : ''}
+      <textarea class="f" id="replyText" rows="2" placeholder="${resolved ? 'Add a follow-up to reopen it…' : 'Add a follow-up…'}" aria-label="Follow-up"></textarea>
+      <div class="grid2"><button class="btn" data-cmd="reply">Reply <span class="kbd">⌘↵</span></button>
+      <button class="btn${resolved ? '' : ' primary'}" data-cmd="${resolved ? 'reopen' : 'resolve'}">${resolved ? 'Reopen' : 'Resolve'}</button></div>`);
+  }
+
+  function annRow(n, pg) {
+    const resolved = isResolved(n);
+    const replies = n.replies || [];
+    const last = replies[replies.length - 1];
+    const meta = last ? `${who(last)}: ${last.text}` : '';
+    const count = replies.length ? ` · ${replies.length} ${replies.length === 1 ? 'reply' : 'replies'}` : '';
+    return `<li><div class="ann-row"><button class="ann-main" data-ann="${esc(n.id)}"><span class="dot" style="background:${esc(n.stroke || n.fill || '#999')}"></span><span><span class="ann-desc">${esc(describeNode(n, pg))}</span>${meta || count ? `<span class="ann-meta">${esc(meta)}${count}</span>` : ''}</span></button>
+      <button class="ann-act" data-${resolved ? 'reopen' : 'resolve'}="${esc(n.id)}" title="${resolved ? 'Reopen' : 'Resolve'}" aria-label="${resolved ? 'Reopen' : 'Resolve'}">${resolved ? '↺' : '✓'}</button></div></li>`;
+  }
+
+  function annotationsSection(pg) {
+    const all = annNodes(pg);
+    const open = all.filter((n) => !isResolved(n)).reverse();
+    const done = all.filter(isResolved).reverse();
+    let body = `<p class="sync" id="syncStatus" data-state="${Sync.status}">${esc(syncText())}</p>`;
+    body += open.length
+      ? `<ul class="ann-list">${open.map((n) => annRow(n, pg)).join('')}</ul>`
+      : `<p class="help">${all.length ? 'Nothing open. Everything here is resolved.' : 'Sketch with the pen, or use arrows, highlights and notes. Right-drag draws an arrow and right-click highlights whatever is under the pointer, from any tool.'}</p>`;
+    if (done.length) {
+      body += `<div class="ann-sub">Resolved · ${done.length}<label class="chk"><input type="checkbox" id="showResolved"${S.showResolved ? ' checked' : ''}> Show on canvas</label></div>`;
+      body += `<ul class="ann-list">${done.map((n) => annRow(n, pg)).join('')}</ul>`;
+      body += '<button class="btn wide" data-cmd="delete-resolved">Delete resolved annotations</button>';
+    }
+    if (all.length) body += '<button class="btn wide" data-cmd="clear-ann">Clear all annotations on this page</button>';
+    return section(`Annotations${open.length ? ` · ${open.length} open` : ''}`, body);
+  }
+
+  /* ---------------- sharing annotations with Claude ---------------- */
+  const Sync = { db: null, status: 'local', last: {}, ready: false };
+  function syncText() {
+    return {
+      local: 'Saved in this browser. Open the published Vellum to share annotations with Claude.',
+      connecting: 'Connecting…',
+      shared: 'Shared with Claude. Claude can read these annotations.',
+      readonly: 'You can see the shared annotations but can’t change them.',
+      error: 'Couldn’t share the latest annotations. They’re saved in this browser for now.',
+    }[Sync.status];
+  }
+  function updateSyncStatus() {
+    const el = document.getElementById('syncStatus');
+    if (el) { el.dataset.state = Sync.status; el.textContent = syncText(); }
+  }
+  const stripAbout = (n) => { const c = { ...n }; delete c.about; if (c.children) c.children = c.children.map(stripAbout); return c; };
+
+  async function initSync() {
+    if (!(window.claude && typeof window.claude.use === 'function')) return;
+    let db = null;
+    try { db = await window.claude.use('db'); } catch (e) { db = null; }
+    if (!db) return;
+    Sync.db = db;
+    Sync.status = 'connecting';
+    updateSyncStatus();
+    db.collection('annotations').onSnapshot((snap) => {
+      let changed = false;
+      for (const d of snap.docs) {
+        if (d.metadata.hasPendingWrites) continue;
+        const body = d.data();
+        if (!body || !Array.isArray(body.items)) continue;
+        const pg = S.doc.pages.find((x) => x.id === body.pageId);
+        if (!pg) continue;
+        const items = body.items.map(stripAbout);
+        const json = JSON.stringify(items);
+        Sync.last[pg.id] = json;
+        if (json !== JSON.stringify(annNodes(pg))) {
+          annGroup(pg, true).children = items;
+          changed = true;
+        }
+      }
+      if (Sync.status !== 'readonly') Sync.status = 'shared';
+      if (changed) {
+        reindex();
+        S.sel = S.sel.filter((id) => node(id));
+        renderContent(); renderOverlay(); renderLayers(); renderProps();
+        scheduleSave();
+      } else updateSyncStatus();
+      if (!Sync.ready) { Sync.ready = true; schedulePush(); }
+    }, () => { Sync.status = 'error'; Sync.db = null; updateSyncStatus(); });
+  }
+
+  let pushTimer = 0;
+  let pushing = false;
+  function schedulePush() {
+    if (!Sync.db || !Sync.ready) return;
+    clearTimeout(pushTimer);
+    pushTimer = setTimeout(pushAnnotations, 700);
+  }
+  async function pushAnnotations() {
+    if (!Sync.db) return;
+    if (pushing) { schedulePush(); return; }
+    pushing = true;
+    try {
+      for (const pg of S.doc.pages) {
+        const items = annNodes(pg);
+        const json = JSON.stringify(items);
+        if (Sync.last[pg.id] === json || (!items.length && Sync.last[pg.id] === undefined)) continue;
+        const described = items.map((n) => ({ ...JSON.parse(JSON.stringify(n)), about: describeNode(n, pg) }));
+        const line = (n) => {
+          const thread = (n.replies || []).map((r) => `${r.author === 'claude' ? 'Claude' : 'User'}: ${r.text}`).join(' | ');
+          return `${isResolved(n) ? 'RESOLVED' : 'OPEN'} · ${n.about}${thread ? ` · follow-ups: ${thread}` : ''}`;
+        };
+        await Sync.db.doc('annotations/' + pg.id).set({
+          pageId: pg.id, pageName: pg.name, updatedAt: new Date().toISOString(),
+          count: items.length, open: items.filter((n) => !isResolved(n)).length,
+          summary: described.map(line), items: described,
+        });
+        Sync.last[pg.id] = json;
+      }
+      if (Sync.status !== 'readonly') Sync.status = 'shared';
+    } catch (e) {
+      Sync.status = e && e.code === 'invalid_argument' ? 'readonly' : 'error';
+    } finally {
+      pushing = false;
+      updateSyncStatus();
+    }
+  }
+
+  /* ---------------- annotation colour ---------------- */
+  function renderColorMenu() {
+    $('#colorSwatch').style.background = S.annColor;
+    $('#colorMenu').innerHTML = ANN_COLORS.map((c) => `<button data-color="${c.v}" aria-pressed="${c.v === S.annColor}" title="${c.name}" aria-label="${c.name}"><span class="swatch" style="background:${c.v}"></span></button>`).join('');
+  }
+  $('#colorBtn').addEventListener('click', (e) => {
+    const m = $('#colorMenu');
+    const open = m.hidden;
+    closeMenus();
+    if (open) {
+      const r = e.currentTarget.getBoundingClientRect();
+      m.style.left = `${Math.min(r.left, window.innerWidth - 190)}px`;
+      m.style.top = r.top > window.innerHeight / 2 ? `${r.top - 48}px` : `${r.bottom + 6}px`;
+      m.hidden = false;
+      e.currentTarget.setAttribute('aria-expanded', 'true');
+    }
+    e.stopPropagation();
+  });
+  $('#colorMenu').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-color]');
+    if (!b) return;
+    S.annColor = b.dataset.color;
+    try { localStorage.setItem(COLOR_KEY, S.annColor); } catch (err) { /* convenience only */ }
+    renderColorMenu();
+    closeMenus();
+    // Recolour selected annotations too.
+    const inAnn = selNodes().filter((n) => chainTo(n.id).some(isAnnGroup));
+    if (inAnn.length) {
+      const col = ANN_COLORS.find((c) => c.v === S.annColor);
+      const paint = (n) => {
+        if (n.type === 'STICKY') n.fill = col.note;
+        else if (n.type === 'RECT') n.fill = col.v;
+        else if (n.type === 'GROUP') n.children.forEach(paint);
+        else {
+          n.stroke = col.v;
+          if (n.strokes) n.strokes = n.strokes.map((st) => ({ ...st, stroke: col.v }));
+        }
+      };
+      mutate(() => inAnn.forEach(paint));
+    }
+  });
+  renderColorMenu();
+
   /* ---------------- text editing ---------------- */
   function startEdit(n, selectAll) {
     S.editing = n.id;
     S.sel = [n.id];
     editor.hidden = false;
-    editor.value = C.plainText(n);
+    editor.value = editText(n);
     renderContent();
     renderOverlay();
     positionEditor();
@@ -629,6 +1155,18 @@
     if (!n) { S.editing = null; editor.hidden = true; return; }
     const b = bnds(n);
     const z = S.view.z;
+    if (n.type === 'STICKY') {
+      Object.assign(editor.style, {
+        left: `${n.x * z + S.view.x}px`, top: `${n.y * z + S.view.y}px`, width: `${n.w * z}px`,
+        padding: `${C.STICKY_PAD * z}px`, boxSizing: 'border-box', background: n.fill || '#FFECBD', borderRadius: `${6 * z}px`,
+        fontFamily: C.DEFAULT_FONT, fontSize: `${(n.fontSize || 16) * z}px`, fontWeight: 500, lineHeight: '1.35',
+        color: n.color || '#1E1E1E', textAlign: 'left',
+      });
+      editor.style.height = 'auto';
+      editor.style.height = `${Math.max(editor.scrollHeight, b.h * z)}px`;
+      return;
+    }
+    Object.assign(editor.style, { padding: '0', background: 'transparent', borderRadius: '0', boxSizing: 'content-box' });
     Object.assign(editor.style, {
       left: `${b.x * z + S.view.x}px`,
       top: `${b.y * z + S.view.y}px`,
@@ -653,7 +1191,7 @@
     const v = editor.value;
     if (!v.trim()) {
       mutate(() => removeNodes([n]));
-    } else if (v !== C.plainText(n)) {
+    } else if (v !== editText(n)) {
       mutate(() => { n.text = v; delete n.runs; });
     } else {
       renderContent();
@@ -729,6 +1267,7 @@
   function groupSel() {
     const nodes = topLevelSel();
     if (!nodes.length) return;
+    if (nodes.every((n) => isAnnGroup(parentOf(n.id)))) { combineAnnotations(); return; }
     const parent = parentOf(nodes[0].id);
     if (!nodes.every((n) => parentOf(n.id) === parent)) { toast('Select layers that share a parent to group them.'); return; }
     mutate(() => {
@@ -748,6 +1287,8 @@
       for (const g of groups) {
         const p = parentOf(g.id);
         const i = p.children.indexOf(g);
+        // Splitting a combined annotation keeps its thread on the first part.
+        if (isAnnGroup(p) && g.replies && g.replies.length && g.children[0]) g.children[0].replies = (g.children[0].replies || []).concat(g.replies);
         p.children.splice(i, 1, ...g.children);
         ids.push(...g.children.map((c) => c.id));
         if (S.ctxId === g.id) S.ctxId = null;
@@ -783,13 +1324,14 @@
   }
   function selectAll() {
     const list = S.ctxId && node(S.ctxId) ? node(S.ctxId).children : page().children;
-    setSel(list.filter((n) => n.visible !== false && !n.locked).map((n) => n.id), { reveal: false });
+    setSel(list.filter((n) => n.visible !== false && !n.locked && !hiddenResolved(n)).map((n) => n.id), { reveal: false });
   }
   function escape() {
     if (S.drag) return;
+    if (S.tool === 'pen' && sketchInfo()) { finishSketch(); return; }
     if (S.sel.length) {
       const p = parentOf(S.sel[0]);
-      if (p && !isPage(p) && p.type === 'GROUP') {
+      if (p && !isPage(p) && p.type === 'GROUP' && !p.annotation) {
         setSel([p.id]);
         setCtx(ctxForNode(p.id));
         return;
@@ -869,8 +1411,13 @@
     ellipse: 'Drag to draw an ellipse · hold Shift for a circle',
     text: 'Click to place text, then type · ⌘Enter or Esc to finish',
     connector: 'Drag from one layer to another to connect them with an arrow',
+    pen: 'Sketch what you want · every stroke joins the same sketch until you press Done or Esc',
+    arrow: 'Drag to draw an arrow · ends stick to the layers under them · hold Alt for a free end · right-drag works from any tool',
+    mark: 'Click a layer to highlight it, click again to clear · drag to highlight an area · right-click works from any tool',
+    note: 'Click to drop a note, then type · ⌘Enter or Esc to finish',
   };
   function setTool(t) {
+    if (t !== 'pen') S.sketchId = null;
     S.tool = t;
     svg.setAttribute('class', `tool-${t}`);
     renderChrome();
@@ -885,6 +1432,9 @@
     chip.hidden = !g;
     if (g) $('#ctxName').textContent = `Inside “${g.name}”`;
     $('#exportBtn').textContent = S.sel.length ? 'Export selection' : 'Export page';
+    const sk = S.tool === 'pen' ? sketchInfo() : null;
+    $('#sketchChip').hidden = !sk;
+    if (sk) { const k = C.inkStrokes(sk).length; $('#sketchInfo').textContent = `${sk.name} · ${k} stroke${k === 1 ? '' : 's'}`; }
   }
 
   /* ---------------- pages ---------------- */
@@ -938,6 +1488,8 @@
     GROUP: '<svg width="16" height="16" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="2 1.6"/></svg>',
     SECTION: '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M5 2v12M11 2v12M2 5h12M2 11h12" stroke="currentColor" stroke-width="1.2"/></svg>',
     CONNECTOR: '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 13 12 4" stroke="currentColor" stroke-width="1.3"/><path d="M8.5 3.5H12.5V7.5" stroke="currentColor" stroke-width="1.3" fill="none"/></svg>',
+    INK: '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M2.5 11c2-4 4-6 5-4s2 3 6-3" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>',
+    STICKY: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M3 3h10v6.5L9.5 13H3z"/><path d="M13 9.5H9.5V13"/></svg>',
   };
   const EYE = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></svg>';
   const EYE_OFF = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 2l12 12M6.5 4Q7.2 3.5 8 3.5c4 0 6.5 4.5 6.5 4.5a12 12 0 0 1-2 2.4M4 5.3A12 12 0 0 0 1.5 8S4 12.5 8 12.5c1 0 1.9-.3 2.7-.7"/></svg>';
@@ -949,7 +1501,7 @@
     const walk = (list, depth, dimmed) => {
       for (let i = list.length - 1; i >= 0; i--) {
         const n = list[i];
-        const hidden = n.visible === false;
+        const hidden = n.visible === false || isResolved(n);
         const hasKids = !!(n.children && n.children.length);
         const open = S.expanded.has(n.id);
         rows.push(`<div class="row${S.sel.includes(n.id) ? ' sel' : ''}${hidden || dimmed ? ' dim' : ''}" data-id="${esc(n.id)}" style="--d:${depth}" role="treeitem" aria-selected="${S.sel.includes(n.id)}"${hasKids ? ` aria-expanded="${open}"` : ''}>`
@@ -1031,11 +1583,14 @@
       const pg = page();
       const count = (() => { let c = 0; C.walk(pg.children, () => c++); return c; })();
       h += section('Page', `<label class="f"><span>Name</span><input type="text" data-k="pageName" value="${esc(pg.name)}" aria-label="Page name"></label><p class="help">${count} layer${count === 1 ? '' : 's'} on this page.</p>`);
+      h += annotationsSection(pg);
       h += exportSection(`Export “${pg.name}”`);
       h += section('Shortcuts', `<dl class="keys">
         <dt>Move · Hand</dt><dd>V · H</dd><dt>Rectangle · Ellipse</dt><dd>R · O</dd><dt>Text · Connector</dt><dd>T · C</dd>
         <dt>Group · Ungroup</dt><dd>⌘G · ⇧⌘G</dd><dt>Duplicate</dt><dd>⌘D</dd><dt>Copy · Paste</dt><dd>⌘C · ⌘V</dd>
         <dt>Bring forward · back</dt><dd>⌘] · ⌘[</dd><dt>Hide · Lock</dt><dd>⇧⌘H · ⇧⌘L</dd>
+        <dt>Pen · Arrow</dt><dd>P · A</dd><dt>Highlight · Note</dt><dd>M · N</dd>
+        <dt>Arrow · highlight, any tool</dt><dd>Right-drag · right-click</dd>
         <dt>Zoom to fit · selection</dt><dd>⇧1 · ⇧2</dd><dt>Zoom 100%</dt><dd>⇧0</dd><dt>Undo · Redo</dt><dd>⌘Z · ⇧⌘Z</dd></dl>`);
       el.innerHTML = h;
       return;
@@ -1044,7 +1599,9 @@
       const u = unionOf(sel);
       h += section(`${sel.length} layers`, `<div class="grid2">${num('X', 'x', u && u.x)}${num('Y', 'y', u && u.y)}</div>
         <div class="grid3">${[['left', '⇤'], ['hcenter', '↔'], ['right', '⇥'], ['top', '⤒'], ['vcenter', '↕'], ['bottom', '⤓']].map(([k, g]) => `<button class="btn" data-align="${k}" title="Align ${k}" aria-label="Align ${k}">${g}</button>`).join('')}</div>
-        <button class="btn wide" data-cmd="group">Group selection  <span class="kbd">⌘G</span></button>`);
+        ${sel.every((x) => isAnnGroup(parentOf(x.id)))
+          ? '<button class="btn primary wide" data-cmd="combine">Combine into one annotation <span class="kbd">⌘G</span></button>'
+          : '<button class="btn wide" data-cmd="group">Group selection  <span class="kbd">⌘G</span></button>'}`);
       h += exportSection('Export selection');
       el.innerHTML = h;
       return;
@@ -1052,6 +1609,7 @@
     const n = sel[0];
     const b = bnds(n) || { x: 0, y: 0, w: 0, h: 0 };
     h += `<section class="ps"><div class="title"><span class="tag">${TYPE_LABEL[n.type]}</span></div><label class="f"><span>Name</span><input type="text" data-k="name" value="${esc(n.name || '')}" aria-label="Layer name"></label></section>`;
+    if (chainTo(n.id).some(isAnnGroup)) h += threadSection(n);
     const sized = RESIZABLE.has(n.type);
     if (n.type !== 'CONNECTOR') {
       h += section('Layout', `<div class="grid2">${num('X', 'x', b.x)}${num('Y', 'y', b.y)}${num('W', 'w', b.w, 1, sized ? '' : 'disabled')}${num('H', 'h', b.h, 1, sized && n.type !== 'TEXT' ? '' : 'disabled')}</div>`);
@@ -1062,10 +1620,19 @@
       look += `<div class="grid2">${color('Stroke', 'stroke', n.stroke)}${num('Wt', 'strokeWidth', n.strokeWidth || 0, 0.5, 'min="0"')}</div>`;
       if (n.type !== 'ELLIPSE') look += `<div class="grid2">${num('Radius', 'radius', n.radius || 0, 1, 'min="0"')}</div>`;
     }
+    if (n.type === 'INK') {
+      look += `<div class="grid2">${color('Stroke', 'stroke', n.stroke)}${num('Wt', 'strokeWidth', n.strokeWidth || 5, 0.5, 'min="0.5"')}</div>`;
+    }
+    if (n.type === 'STICKY') {
+      look += `<div class="grid2">${color('Note', 'fill', n.fill)}${num('Size', 'fontSize', n.fontSize || 16, 1, 'min="8"')}</div>`;
+    }
     if (n.type === 'PATH') {
       look += `<div class="grid2">${color('Fill', 'fill', n.fill)}${color('Outline', 'stroke', n.stroke)}${color('Detail', 'detail', n.detail)}${num('Wt', 'strokeWidth', n.strokeWidth || 0, 0.2, 'min="0" title="Outline weight in artboard units"')}</div>`;
     }
     h += section('Appearance', look);
+    if (n.type === 'STICKY') {
+      h += section('Note text', `<textarea class="f" data-k="text" rows="4" aria-label="Note text">${esc(n.text || '')}</textarea>`);
+    }
     if (n.type === 'TEXT') {
       const runsNote = n.runs && n.runs.length > 1 ? '<p class="help">This text has more than one colour. Editing the words here makes it one colour.</p>' : '';
       h += section('Text', `<textarea class="f" data-k="text" rows="3" aria-label="Text content">${esc(C.plainText(n))}</textarea>${runsNote}
@@ -1079,7 +1646,8 @@
       const nm = (ep) => (ep && ep.id && node(ep.id) ? node(ep.id).name : 'a point');
       h += section('Connector', `<p class="help">From “${esc(nm(n.from))}” to “${esc(nm(n.to))}”.</p>
         <label class="f"><span>Label</span><input type="text" data-k="label" value="${esc(n.label || '')}" aria-label="Label"></label>
-        <div class="grid2">${color('Line', 'stroke', n.stroke)}${num('Wt', 'strokeWidth', n.strokeWidth || 2, 0.5, 'min="0.5"')}${num('Label', 'labelSize', n.labelSize || 14, 1, 'min="6" title="Label size"')}</div>
+        <div class="grid2">${color('Line', 'stroke', n.stroke)}${num('Wt', 'strokeWidth', n.strokeWidth || 2, 0.5, 'min="0.5"')}${num('Label', 'labelSize', n.labelSize || 14, 1, 'min="6" title="Label size"')}
+        ${num('Curve', 'bend', n.bend || 0, 5, 'title="Curve: positive bends up, negative bends down"')}${num('Gap', 'gap', Array.isArray(n.gap) ? n.gap[0] : n.gap || 0, 1, 'min="0" title="Space left at each end"')}</div>
         <label class="chk"><input type="checkbox" data-k="dash"${n.dash ? ' checked' : ''}> Dashed line</label>
         <label class="chk"><input type="checkbox" data-k="arrow"${n.arrow !== false ? ' checked' : ''}> Arrowhead</label>`);
     }
@@ -1133,11 +1701,18 @@
             n[key] = c;
             if (key === 'stroke' && c && !n.strokeWidth && n.type !== 'PATH') n.strokeWidth = 1;
             if (key === 'color' && n.runs) delete n.runs;
+            if (key === 'stroke' && n.strokes) n.strokes = n.strokes.map((st) => ({ ...st, stroke: c }));
           }
           break;
         }
-        case 'strokeWidth': case 'radius': case 'fontSize': case 'lineHeight': case 'labelSize':
-          if (Number.isFinite(numVal) && numVal >= 0) n[key] = numVal;
+        case 'bend':
+          if (Number.isFinite(numVal)) n.bend = numVal;
+          break;
+        case 'strokeWidth': case 'radius': case 'fontSize': case 'lineHeight': case 'labelSize': case 'gap':
+          if (Number.isFinite(numVal) && numVal >= 0) {
+            n[key] = numVal;
+            if (key === 'strokeWidth' && n.strokes) n.strokes = n.strokes.map((st) => ({ ...st, strokeWidth: numVal }));
+          }
           break;
         case 'fontWeight': n.fontWeight = +val; break;
         case 'text': n.text = String(raw); delete n.runs; break;
@@ -1151,10 +1726,12 @@
 
   $('#props').addEventListener('change', (e) => {
     const t = e.target;
+    if (t.id === 'showResolved') { setShowResolved(t.checked); return; }
     if (!t.dataset.k) return;
     applyProp(t.dataset.k, t.type === 'checkbox' ? t.checked : t.value, t);
   });
   $('#props').addEventListener('keydown', (e) => {
+    if (e.target.id === 'replyText' && e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); command('reply'); }
     if (e.key === 'Enter' && e.target.tagName === 'INPUT') e.target.blur();
     e.stopPropagation();
   });
@@ -1164,6 +1741,16 @@
     if (b.dataset.align) align(b.dataset.align);
     if (b.dataset.set === 'align') mutate(() => { selNodes()[0].align = b.dataset.v; });
     if (b.dataset.cmd) command(b.dataset.cmd);
+    if (b.dataset.intent) { const n = selNodes()[0]; if (n) mutate(() => { n.intent = b.dataset.intent; }); return; }
+    if (b.dataset.resolve) { resolveAnn(b.dataset.resolve, true); return; }
+    if (b.dataset.reopen) { resolveAnn(b.dataset.reopen, false); return; }
+    if (b.dataset.ann) {
+      const n = node(b.dataset.ann);
+      if (!n) return;
+      if (hiddenResolved(n)) setShowResolved(true);
+      setSel([n.id]);
+      zoomToFit([n]);
+    }
   });
 
   /* ---------------- files + export ---------------- */
@@ -1273,8 +1860,34 @@
       }
       case 'copy-svg': copySvg(); break;
       case 'group': groupSel(); break;
+      case 'combine': combineAnnotations(); break;
       case 'ungroup': ungroupSel(); break;
       case 'theme': toggleTheme(); break;
+      case 'reply': {
+        const n = selNodes()[0];
+        const ta = $('#replyText');
+        const v = ta ? ta.value.trim() : '';
+        if (!n || !v) { if (ta) ta.focus(); break; }
+        mutate(() => {
+          n.replies = [...(n.replies || []), { id: C.newId(), author: 'user', text: v, at: new Date().toISOString() }];
+          // A follow-up on a resolved annotation means there is more to do.
+          if (isResolved(n)) { delete n.status; delete n.resolvedAt; delete n.resolvedBy; }
+        });
+        toast('Follow-up added');
+        break;
+      }
+      case 'resolve': { const n = selNodes()[0]; if (n) resolveAnn(n.id, true); break; }
+      case 'reopen': { const n = selNodes()[0]; if (n) resolveAnn(n.id, false); break; }
+      case 'delete-resolved': {
+        const g = annGroup(page(), false);
+        if (g && g.children.some(isResolved)) { mutate(() => { g.children = g.children.filter((x) => !isResolved(x)); }); toast('Resolved annotations deleted · ⌘Z to undo'); }
+        break;
+      }
+      case 'clear-ann': {
+        const g = annGroup(page(), false);
+        if (g && g.children.length) { mutate(() => { g.children = []; S.sel = []; }); toast('Annotations cleared · ⌘Z to undo'); }
+        break;
+      }
     }
   }
 
@@ -1297,6 +1910,8 @@
   function closeMenus() {
     $('#fileMenu').hidden = true;
     $('#fileBtn').setAttribute('aria-expanded', 'false');
+    $('#colorMenu').hidden = true;
+    $('#colorBtn').setAttribute('aria-expanded', 'false');
   }
   $('#fileBtn').addEventListener('click', (e) => {
     const m = $('#fileMenu');
@@ -1340,6 +1955,8 @@
   $('#zoomLabel').addEventListener('click', () => zoomToFit());
   $('#exportBtn').addEventListener('click', () => doExport('svg', 1, true));
   $('#ctxExit').addEventListener('click', () => { setCtx(null); setSel([]); });
+  $('#sketchDone').addEventListener('click', finishSketch);
+  $('#sketchNew').addEventListener('click', () => { S.sketchId = null; renderChrome(); toast('Your next stroke starts a new sketch'); });
   $('#toggleLeft').addEventListener('click', () => { $('#left').classList.toggle('open'); $('#right').classList.remove('open'); });
   $('#toggleRight').addEventListener('click', () => { $('#right').classList.toggle('open'); $('#left').classList.remove('open'); });
 
@@ -1377,14 +1994,14 @@
       case 'ArrowDown': e.preventDefault(); nudge(0, step); return;
       case 'Enter': {
         const n = selNodes()[0];
-        if (n && S.sel.length === 1 && n.type === 'TEXT') { e.preventDefault(); startEdit(n, false); }
+        if (n && S.sel.length === 1 && (n.type === 'TEXT' || n.type === 'STICKY')) { e.preventDefault(); startEdit(n, false); }
         else if (n && S.sel.length === 1 && n.children && n.children.length) { e.preventDefault(); if (n.type === 'GROUP') setCtx(n.id); setSel(n.children.map((c) => c.id)); }
         return;
       }
       case '+': case '=': zoomBy(1.25); return;
       case '-': zoomBy(0.8); return;
     }
-    const tools = { v: 'move', h: 'hand', r: 'rect', o: 'ellipse', t: 'text', c: 'connector' };
+    const tools = { v: 'move', h: 'hand', r: 'rect', o: 'ellipse', t: 'text', c: 'connector', p: 'pen', a: 'arrow', m: 'mark', n: 'note' };
     if (tools[k] && !e.altKey) setTool(tools[k]);
   });
   window.addEventListener('keyup', (e) => {
@@ -1419,6 +2036,11 @@
         S.doc = stored;
         reindex();
         S.pageId = stored.pages[0].id;
+        for (const pg of sample.pages) {
+          const old = stored.pages.find((x) => x.id === pg.id);
+          const g = old && old.children.find(isAnnGroup);
+          if (g) { pg.children = pg.children.filter((n) => !isAnnGroup(n)); pg.children.push(JSON.parse(JSON.stringify(g))); }
+        }
         loadDoc(sample, { history: true });
         toast('Loaded the updated Fog of War boards · ⌘Z brings back your previous copy', 6000);
         return;
@@ -1438,5 +2060,5 @@
     exportSVG: (ids, opts) => C.exportSVG((ids || S.sel).map(node), ctx(), opts),
   };
 
-  boot();
+  boot().then(initSync);
 })();
