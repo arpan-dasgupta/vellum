@@ -1,0 +1,255 @@
+<title>Vellum</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --ground: #E2E5EA;
+    --grid: rgba(22, 25, 29, 0.06);
+    --panel: #FBFBFC;
+    --panel-2: #F1F3F6;
+    --line: #D8DCE2;
+    --ink: #16191D;
+    --muted: #68707B;
+    --accent: #2F5BEA;
+    --accent-ink: #FFFFFF;
+    --accent-soft: rgba(47, 91, 234, 0.12);
+    --danger: #C4372F;
+    --shadow: 0 10px 30px rgba(20, 24, 31, 0.18);
+    --ui: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --ground: #111316;
+      --grid: rgba(230, 232, 235, 0.05);
+      --panel: #1C1F23;
+      --panel-2: #262A2F;
+      --line: #31363C;
+      --ink: #E6E8EB;
+      --muted: #979FAA;
+      --accent: #7A95FF;
+      --accent-ink: #0E1220;
+      --accent-soft: rgba(122, 149, 255, 0.18);
+      --danger: #FF7A70;
+      --shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --ground: #111316;
+    --grid: rgba(230, 232, 235, 0.05);
+    --panel: #1C1F23;
+    --panel-2: #262A2F;
+    --line: #31363C;
+    --ink: #E6E8EB;
+    --muted: #979FAA;
+    --accent: #7A95FF;
+    --accent-ink: #0E1220;
+    --accent-soft: rgba(122, 149, 255, 0.18);
+    --danger: #FF7A70;
+    --shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  }
+
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body { margin: 0; overflow: hidden; background: var(--panel); color: var(--ink); font: 13px/1.4 var(--ui); }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .app { display: grid; grid-template-columns: 240px minmax(0, 1fr) 260px; grid-template-rows: 44px minmax(0, 1fr); height: 100%; }
+
+  /* ---- top bar ---- */
+  .bar { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; letter-spacing: 0.01em; padding-right: 6px; white-space: nowrap; }
+  .brand svg { flex: none; }
+  .sep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; flex: none; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 30px; min-width: 30px; padding: 0 9px; border: 0; border-radius: 6px; background: transparent; white-space: nowrap; flex: none; }
+  .btn:hover { background: var(--panel-2); }
+  .btn[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+  .btn:disabled { opacity: 0.4; cursor: default; background: transparent; }
+  .btn.icon { padding: 0; width: 32px; }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); font-weight: 500; }
+  .btn.primary:hover { filter: brightness(1.06); }
+  .tools { display: flex; gap: 2px; }
+  .spacer { flex: 1; min-width: 8px; }
+  .zoom { display: flex; align-items: center; }
+  .zoom .btn { font-family: var(--mono); font-size: 12px; }
+  #zoomLabel { min-width: 58px; }
+  .mobile-only { display: none; }
+
+  .menu { position: relative; }
+  .menu-pop { position: fixed; z-index: 30; min-width: 220px; padding: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); }
+  .menu-pop button { display: flex; width: 100%; justify-content: space-between; gap: 16px; padding: 7px 10px; border: 0; border-radius: 6px; background: none; text-align: left; }
+  .menu-pop button:hover { background: var(--accent-soft); }
+  .menu-pop kbd, .kbd { font: 11px var(--mono); color: var(--muted); }
+  .menu-pop hr { border: 0; border-top: 1px solid var(--line); margin: 6px 4px; }
+
+  /* ---- panels ---- */
+  .panel { background: var(--panel); overflow: auto; min-height: 0; }
+  .left { border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+  .right { border-left: 1px solid var(--line); }
+  .phead { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  .phead .btn { height: 24px; min-width: 24px; padding: 0; }
+  .pages { list-style: none; margin: 0; padding: 0 6px 8px; border-bottom: 1px solid var(--line); }
+  .pages li { display: flex; align-items: center; justify-content: space-between; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
+  .pages li:hover { background: var(--panel-2); }
+  .pages li.on { font-weight: 600; }
+  .pages li.on::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-right: 8px; flex: none; }
+  .pages li .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pages li .x { visibility: hidden; border: 0; background: none; color: var(--muted); padding: 0 2px; }
+  .pages li:hover .x { visibility: visible; }
+
+  .layers { flex: 1; overflow: auto; padding: 2px 0 12px; }
+  .row { display: flex; align-items: center; height: 28px; padding-left: calc(6px + var(--d) * 14px); padding-right: 6px; gap: 4px; cursor: default; white-space: nowrap; }
+  .row:hover { background: var(--panel-2); }
+  .row.sel { background: var(--accent-soft); }
+  .row.dim .nm, .row.dim .ico { opacity: 0.45; }
+  .row .caret, .row .caret-sp { width: 16px; height: 16px; flex: none; border: 0; padding: 0; background: none; color: var(--muted); font-size: 10px; line-height: 16px; }
+  .row .caret.open { transform: rotate(90deg); }
+  .row .ico { width: 16px; height: 16px; flex: none; color: var(--muted); display: inline-flex; }
+  .row .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  .row .nm input { width: 100%; height: 22px; border: 1px solid var(--accent); border-radius: 4px; background: var(--panel); padding: 0 4px; }
+  .row .rb { visibility: hidden; width: 22px; height: 22px; flex: none; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 4px; background: none; color: var(--muted); }
+  .row:hover .rb, .row .rb.on { visibility: visible; }
+  .row .rb:hover { background: var(--line); }
+  .empty { color: var(--muted); padding: 8px 14px; margin: 0; }
+
+  /* ---- properties ---- */
+  .ps { padding: 12px 12px 14px; border-bottom: 1px solid var(--line); display: grid; gap: 8px; }
+  .ps h3 { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  .ps .title { display: flex; align-items: center; gap: 8px; }
+  .ps .title .tag { font: 11px var(--mono); color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .grid3 { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+  .f { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px; border-radius: 6px; background: var(--panel-2); border: 1px solid transparent; min-width: 0; }
+  .f:focus-within { border-color: var(--accent); }
+  .f > span { color: var(--muted); font-size: 11px; flex: none; min-width: 12px; }
+  .f input, .f select { flex: 1; min-width: 0; width: 100%; border: 0; background: none; outline: none; font-family: var(--mono); font-size: 12px; padding: 0; }
+  .f select { font-family: var(--ui); font-size: 13px; }
+  .f input[type="color"] { flex: none; width: 20px; height: 20px; padding: 0; border: 1px solid var(--line); border-radius: 4px; cursor: pointer; background: none; }
+  .f input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+  .f input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 3px; }
+  .full { grid-column: 1 / -1; }
+  textarea.f { height: auto; min-height: 64px; padding: 6px 8px; resize: vertical; font: 13px/1.4 var(--ui); border: 1px solid transparent; outline: none; }
+  textarea.f:focus { border-color: var(--accent); }
+  .chk { display: flex; align-items: center; gap: 8px; color: var(--ink); }
+  .seg { display: flex; background: var(--panel-2); border-radius: 6px; padding: 2px; }
+  .seg button { flex: 1; height: 26px; border: 0; border-radius: 5px; background: none; }
+  .seg button[aria-pressed="true"] { background: var(--panel); box-shadow: 0 1px 2px rgba(0,0,0,.15); }
+  .wide { width: 100%; }
+  .help { color: var(--muted); margin: 0; }
+  .keys { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; margin: 0; }
+  .keys dt { color: var(--ink); }
+  .keys dd { margin: 0; font: 11px/1.8 var(--mono); color: var(--muted); text-align: right; }
+
+  /* ---- stage ---- */
+  .stage { position: relative; overflow: hidden; background-color: var(--ground); background-image: radial-gradient(var(--grid) 1px, transparent 1px); background-size: 24px 24px; min-width: 0; }
+  #canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; user-select: none; -webkit-user-select: none; }
+  #canvas.tool-rect, #canvas.tool-ellipse, #canvas.tool-text, #canvas.tool-connector { cursor: crosshair; }
+  #canvas.tool-hand, #canvas.panning { cursor: grab; }
+  #canvas.grabbing { cursor: grabbing; }
+  #overlay { pointer-events: none; }
+  #overlay .handle, #overlay .sec-label { pointer-events: all; }
+  #overlay .handle { fill: #FFFFFF; stroke: var(--accent); cursor: nwse-resize; }
+  #overlay .handle[data-handle="ne"], #overlay .handle[data-handle="sw"] { cursor: nesw-resize; }
+  #overlay .handle[data-handle="n"], #overlay .handle[data-handle="s"] { cursor: ns-resize; }
+  #overlay .handle[data-handle="e"], #overlay .handle[data-handle="w"] { cursor: ew-resize; }
+  #overlay .sel-box { fill: none; stroke: var(--accent); }
+  #overlay .hover-box { fill: none; stroke: var(--accent); }
+  #overlay .marquee { fill: var(--accent-soft); stroke: var(--accent); }
+  #overlay .sec-label { fill: var(--muted); font-family: var(--ui); font-weight: 500; cursor: default; }
+  #overlay .sec-label.on { fill: var(--accent); }
+  #overlay .badge-bg { fill: var(--accent); }
+  #overlay .badge { fill: var(--accent-ink); font-family: var(--mono); }
+  #overlay .preview { fill: var(--accent-soft); stroke: var(--accent); }
+  #overlay .link { stroke: var(--accent); fill: none; }
+  #textEditor { position: absolute; z-index: 5; margin: 0; padding: 0; border: 0; outline: 1px solid var(--accent); background: transparent; resize: none; overflow: hidden; white-space: pre-wrap; caret-color: var(--accent); }
+  .chip { position: absolute; left: 12px; top: 12px; z-index: 4; display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 10px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); }
+  .chip .btn { height: 24px; padding: 0 8px; }
+  .hint { position: absolute; left: 12px; bottom: 12px; z-index: 4; max-width: calc(100% - 24px); padding: 5px 10px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); color: var(--muted); font-size: 12px; pointer-events: none; }
+  .toast { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 20; max-width: calc(100% - 32px); padding: 8px 14px; border-radius: 8px; background: var(--ink); color: var(--panel); box-shadow: var(--shadow); }
+
+  @media (max-width: 820px) {
+    .app { grid-template-columns: minmax(0, 1fr); }
+    .panel.left, .panel.right { position: fixed; top: 44px; bottom: 0; z-index: 25; width: min(300px, 86vw); box-shadow: var(--shadow); transition: transform 0.2s ease; }
+    .panel.left { left: 0; transform: translateX(-105%); }
+    .panel.right { right: 0; transform: translateX(105%); }
+    .panel.open { transform: none; }
+    .mobile-only { display: inline-flex; }
+    .brand, .bar .sep, #zoomIn, #zoomOut, #redoBtn, .hint { display: none; }
+    .bar { gap: 4px; padding: 0 8px; }
+    .tools { position: fixed; left: 50%; bottom: calc(14px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 20; padding: 4px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); }
+    .toast { bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
+    .stage { grid-column: 1; }
+  }
+  @media (prefers-reduced-motion: reduce) { .panel { transition: none !important; } }
+</style>
+
+<div class="app" id="app">
+  <header class="bar" role="toolbar" aria-label="Vellum toolbar">
+    <div class="brand">
+      <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M2 3.5 9 15l7-11.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="9" cy="15" r="1.8" fill="var(--accent)"/></svg>
+      <span>Vellum</span>
+    </div>
+    <div class="menu">
+      <button class="btn" id="fileBtn" aria-haspopup="true" aria-expanded="false">File</button>
+      <div class="menu-pop" id="fileMenu" hidden>
+        <button data-cmd="new">New file</button>
+        <button data-cmd="open">Open file… <kbd>.json</kbd></button>
+        <button data-cmd="save">Save file <kbd>.json</kbd></button>
+        <hr>
+        <button data-cmd="sample">Load Fog of War sample</button>
+        <hr>
+        <button data-cmd="export-page">Export page as SVG</button>
+        <button data-cmd="theme">Toggle dark mode</button>
+      </div>
+    </div>
+    <div class="sep"></div>
+    <div class="tools" id="tools">
+      <button class="btn icon" data-tool="move" title="Move (V)" aria-label="Move"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 2l9.5 5.2-4.2 1.1L6.4 13z" fill="currentColor"/></svg></button>
+      <button class="btn icon" data-tool="hand" title="Hand (H)" aria-label="Hand"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M5 8V3.5a1 1 0 0 1 2 0V7m0-4.2a1 1 0 0 1 2 0V7m0-3a1 1 0 0 1 2 0v3.5m0-2a1 1 0 0 1 2 0V10c0 2.5-1.6 4-4 4H8.3c-1.3 0-2.2-.5-3-1.5L3 9.6a1 1 0 0 1 1.5-1.3L5 9"/></svg></button>
+      <button class="btn icon" data-tool="rect" title="Rectangle (R)" aria-label="Rectangle"><svg width="16" height="16" viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.4"/></svg></button>
+      <button class="btn icon" data-tool="ellipse" title="Ellipse (O)" aria-label="Ellipse"><svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.4"/></svg></button>
+      <button class="btn icon" data-tool="text" title="Text (T)" aria-label="Text"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 3.5h10M8 3.5V13" stroke="currentColor" stroke-width="1.6" fill="none"/></svg></button>
+      <button class="btn icon" data-tool="connector" title="Connector (C): drag from one layer to another" aria-label="Connector"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M2.5 13.5 12 4" stroke="currentColor" stroke-width="1.4"/><path d="M8 3h5v5z" fill="currentColor"/></svg></button>
+    </div>
+    <div class="sep"></div>
+    <button class="btn icon" id="undoBtn" title="Undo (⌘Z)" aria-label="Undo"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M5 4 2 7l3 3"/><path d="M2.5 7H10a3.5 3.5 0 0 1 0 7H7"/></svg></button>
+    <button class="btn icon" id="redoBtn" title="Redo (⇧⌘Z)" aria-label="Redo"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="m11 4 3 3-3 3"/><path d="M13.5 7H6a3.5 3.5 0 0 0 0 7h3"/></svg></button>
+    <div class="spacer"></div>
+    <div class="zoom">
+      <button class="btn icon" id="zoomOut" title="Zoom out (-)" aria-label="Zoom out">−</button>
+      <button class="btn" id="zoomLabel" title="Zoom to fit (⇧1)">100%</button>
+      <button class="btn icon" id="zoomIn" title="Zoom in (+)" aria-label="Zoom in">+</button>
+    </div>
+    <button class="btn icon mobile-only" id="toggleLeft" title="Pages and layers" aria-label="Pages and layers"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M8 2 14 5.2 8 8.4 2 5.2z"/><path d="m2 8.2 6 3.2 6-3.2M2 11.2l6 3.2 6-3.2"/></svg></button>
+    <button class="btn icon mobile-only" id="toggleRight" title="Design properties" aria-label="Design properties"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5h11M2.5 11.5h11"/><circle cx="6" cy="4.5" r="1.8" fill="var(--panel)"/><circle cx="10.5" cy="11.5" r="1.8" fill="var(--panel)"/></svg></button>
+    <button class="btn primary" id="exportBtn" title="Export the selection, or the whole page">Export SVG</button>
+  </header>
+
+  <aside class="panel left" id="left" aria-label="Pages and layers">
+    <div class="phead">Pages <button class="btn" id="addPage" title="Add page" aria-label="Add page">+</button></div>
+    <ul class="pages" id="pages"></ul>
+    <div class="phead">Layers</div>
+    <div class="layers" id="layers" role="tree"></div>
+  </aside>
+
+  <main class="stage" id="stage">
+    <svg id="canvas" class="tool-move" xmlns="http://www.w3.org/2000/svg" aria-label="Canvas">
+      <g id="world"><g id="content"></g><g id="overlay"></g></g>
+    </svg>
+    <textarea id="textEditor" hidden spellcheck="false" aria-label="Edit text"></textarea>
+    <div class="chip" id="ctxChip" hidden><span id="ctxName"></span><button class="btn" id="ctxExit">Done</button></div>
+    <div class="hint" id="hint"></div>
+    <div class="toast" id="toast" role="status" hidden></div>
+  </main>
+
+  <aside class="panel right" id="right" aria-label="Design properties"><div id="props"></div></aside>
+</div>
+<input type="file" id="fileInput" accept=".json,application/json" hidden>
+
+<script src="core.js"></script>
+<script src="app.js"></script>
