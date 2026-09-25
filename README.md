@@ -2,6 +2,8 @@
 
 A minimal Figma-style vector editor that runs in the browser. There is no build step and no dependencies: three files (`index.html`, `core.js`, `app.js`) make up the whole app.
 
+This repo also holds diagrams made with Vellum. They live in `diagrams/`, apart from the app, and the app knows nothing about them. Notes for working on either with Claude are in `CLAUDE.md`.
+
 ## What it does
 
 - **Pages and layers.** A layers tree with show/hide and lock, reordering with ⌘[ and ⌘], and inline renaming.
@@ -24,7 +26,17 @@ A minimal Figma-style vector editor that runs in the browser. There is no build 
 python3 tools/devserver.py 8765
 ```
 
-Then open http://127.0.0.1:8765. The dev server serves the app and also accepts `POST /save?name=<file>` to write exports into `exports/`.
+Then open http://127.0.0.1:8765. The dev server serves the app and also accepts `POST /save?path=<file>`, which the render pages use to write files. It only writes `.svg`, `.png`, `.gif` and `.json` files inside a folder named `exports` or under `.tmp/`.
+
+### The starting document
+
+`vellum.config.json` names the document the editor opens when there is no autosaved copy:
+
+```json
+{ "startDocument": "diagrams/fog-of-war/fog-of-war.json" }
+```
+
+File › Load reopens it. If the document has a `sample` tag and a higher `sampleVersion` than an autosaved copy with the same tag, the editor loads the new version and keeps the old copy a single undo away.
 
 ## Keyboard shortcuts
 
@@ -57,7 +69,7 @@ Then open http://127.0.0.1:8765. The dev server serves the app and also accepts 
 }
 ```
 
-Every node has `id`, `type` and `name`, and uses absolute page coordinates. Node types:
+Every node has `id`, `type` and `name`, and uses absolute page coordinates. A document built by a script can also carry `sample` (a tag naming it) and `sampleVersion`, which the editor uses to replace older autosaved copies. Node types:
 
 - `RECT`, `ELLIPSE`: `x y w h fill fillOpacity stroke strokeWidth radius`
 - `TEXT`: `x y text fontSize fontWeight color lineHeight align autoWidth w`, plus optional coloured `runs`
@@ -84,11 +96,35 @@ Each annotation is also a small thread. Select one to add follow-ups, then resol
 
 The step-by-step process Claude follows is in `CLAUDE.md`.
 
+## Batch export
+
+With the dev server running, `export.html?jobs=<jobs.json>` renders layers to SVG and PNG in the browser and saves them. A jobs file looks like this:
+
+```json
+{
+  "doc": "my-diagram.json",
+  "out": "exports",
+  "jobs": [
+    { "nodes": ["section-1"], "file": "overview", "pad": 0, "scale": 1 },
+    { "nodes": ["panel-3"], "file": "panel-3", "pad": 24, "bg": "#F9F9F9", "scale": 2 }
+  ]
+}
+```
+
+`doc` and `out` are relative to the jobs file. Each job renders the listed layers into `<out>/<file>.svg` and `<out>/<file>.png`, with optional padding, background and PNG scale. SVGs embed the Inter font when it can be fetched.
+
+`export.html?review=<annotations.json>` renders each open annotation on its own, for reviewing annotations; `CLAUDE.md` describes it.
+
 ## Code layout
 
-- `core.js` holds the document helpers, text layout, bounds, SVG rendering and export. It has no DOM dependency apart from an injected text measurer, so the editor and headless exporters share it.
-- `app.js` is the editor: state, pointer and keyboard handling, panels, history and files.
-- `tools/devserver.py` is the local static server with the export save endpoint.
+- **The app.**
+  - `core.js` holds the document helpers, text layout, bounds, SVG rendering and export. It has no DOM dependency apart from an injected text measurer, so the editor and the render pages share it.
+  - `app.js` is the editor: state, pointer and keyboard handling, panels, history, files and annotation sync.
+  - `export.html` is the batch export and review page.
+  - `tools/devserver.py` is the local static server with the save endpoint.
+  - `tools/make_gif.py` packs PNG frames into an animated GIF, with only the Python standard library.
+- **Settings.** `vellum.config.json` names the starting document.
+- **Diagrams.** `diagrams/<name>/` holds each diagram: its build script, document, export jobs, assets, exports and README.
 
 The browser console exposes `window.vellum` (`doc`, `selection`, `select`, `mutate`, `exportSVG`) for scripting.
 

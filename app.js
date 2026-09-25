@@ -6,7 +6,7 @@
   const esc = C.esc;
   const STORE_KEY = 'vellum:doc:v1';
   const THEME_KEY = 'vellum:theme';
-  const SAMPLE_URL = 'samples/fog-of-war.json';
+  const CONFIG_URL = 'vellum.config.json';  // names the document to open first (startDocument)
   const RESIZABLE = new Set(['RECT', 'ELLIPSE', 'PATH', 'SECTION', 'TEXT', 'STICKY', 'IMAGE']);
   const TYPE_LABEL = { RECT: 'Rectangle', ELLIPSE: 'Ellipse', TEXT: 'Text', PATH: 'Vector', GROUP: 'Group', SECTION: 'Section', CONNECTOR: 'Connector', INK: 'Drawing', STICKY: 'Note', IMAGE: 'Image' };
   const ANN_COLORS = [
@@ -1879,14 +1879,28 @@
     scheduleSave();
   }
 
-  async function loadSample(history) {
+  // The starting document is named in vellum.config.json, so the editor itself knows no document.
+  async function fetchStartDoc() {
     try {
-      const doc = await (await fetch(SAMPLE_URL)).json();
-      loadDoc(doc, { history });
-      toast('Loaded the Fog of War sample');
+      const cfg = await (await fetch(CONFIG_URL)).json();
+      if (!cfg || !cfg.startDocument) return null;
+      const doc = await (await fetch(cfg.startDocument)).json();
+      return validDoc(doc) ? doc : null;
     } catch (e) {
-      toast('Couldn’t load the sample file.');
+      return null;
     }
+  }
+
+  function labelStartDocCommand(doc) {
+    const b = document.querySelector('[data-cmd="sample"]');
+    if (b && doc) b.textContent = `Load “${doc.name || 'Untitled'}”`;
+  }
+
+  async function loadSample(history) {
+    const doc = await fetchStartDoc();
+    if (!doc) { toast('Couldn’t load the starting document.'); return; }
+    loadDoc(doc, { history });
+    toast(`Loaded “${doc.name || 'Untitled'}”`);
   }
 
   function command(cmd) {
@@ -2071,13 +2085,12 @@
     await fontsReady();
     mcache.clear();
     C.clearTextCache();
-    let sample = null;
-    try { sample = await (await fetch(SAMPLE_URL)).json(); } catch (e) { sample = null; }
-    if (!validDoc(sample)) sample = null;
+    const sample = await fetchStartDoc();
+    labelStartDocCommand(sample);
     if (validDoc(stored)) {
-      // An autosaved copy of an older sample gets the new sample; the old copy stays one undo away.
-      const tag = stored.sample || (stored.name === 'Fog of War' ? 'fog-of-war' : null);
-      if (sample && tag === sample.sample && (stored.sampleVersion || 1) < (sample.sampleVersion || 1)) {
+      // An autosaved copy of an older version of the starting document (same `sample` tag, lower
+      // `sampleVersion`) gets the new version; the old copy stays one undo away.
+      if (sample && sample.sample && stored.sample === sample.sample && (stored.sampleVersion || 1) < (sample.sampleVersion || 1)) {
         S.doc = stored;
         reindex();
         S.pageId = stored.pages[0].id;
@@ -2087,7 +2100,7 @@
           if (g) { pg.children = pg.children.filter((n) => !isAnnGroup(n)); pg.children.push(JSON.parse(JSON.stringify(g))); }
         }
         loadDoc(sample, { history: true });
-        toast('Loaded the updated Fog of War boards · ⌘Z brings back your previous copy', 6000);
+        toast(`Loaded the updated “${sample.name || 'Untitled'}” · ⌘Z brings back your previous copy`, 6000);
         return;
       }
       loadDoc(stored);

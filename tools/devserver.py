@@ -1,8 +1,11 @@
-"""Static dev server for Vellum that can also save exports to disk.
+"""Static dev server for Vellum that can also save rendered files to disk.
+
+    python3 tools/devserver.py [port]      (default 8765; binds to 127.0.0.1)
 
 GET  serves files from the vellum/ folder.
-POST /save?name=<file>  writes the request body to vellum/exports/<file>.
-Only plain file names ending in .svg, .png or .json are accepted; it binds to 127.0.0.1.
+POST /save?path=<relative path>  writes the request body to that file, creating folders.
+     The path must end in .svg, .png, .gif or .json and lie inside a folder named `exports`
+     or under `.tmp/`, so a save can never overwrite the app, a document or a build script.
 """
 import http.server
 import os
@@ -11,8 +14,20 @@ import sys
 from urllib.parse import urlparse, parse_qs
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-EXPORTS = os.path.join(ROOT, 'exports')
-NAME_OK = re.compile(r'^[A-Za-z0-9._-]+\.(svg|png|json)$')
+PATH_OK = re.compile(r'^[A-Za-z0-9._/-]+\.(svg|png|gif|json)$')
+
+
+def save_target(rel):
+    """The absolute file a save may write for `rel`, or None if it isn't allowed."""
+    if not PATH_OK.match(rel):
+        return None
+    parts = rel.split('/')
+    if any(p in ('', '.', '..') for p in parts):
+        return None
+    if parts[0] != '.tmp' and 'exports' not in parts[:-1]:
+        return None
+    full = os.path.abspath(os.path.join(ROOT, *parts))
+    return full if full.startswith(ROOT + os.sep) else None
 
 
 SKELETON = ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
@@ -49,19 +64,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self):
         url = urlparse(self.path)
-        name = parse_qs(url.query).get('name', [''])[0]
-        if url.path != '/save' or not NAME_OK.match(name):
-            self.send_error(400, 'expected /save?name=<file>.svg|png|json')
+        rel = parse_qs(url.query).get('path', [''])[0]
+        target = save_target(rel) if url.path == '/save' else None
+        if not target:
+            self.send_error(400, 'expected /save?path=<.tmp/... or .../exports/...>.svg|png|gif|json')
             return
         length = int(self.headers.get('Content-Length', 0))
         data = self.rfile.read(length)
-        os.makedirs(EXPORTS, exist_ok=True)
-        with open(os.path.join(EXPORTS, name), 'wb') as fh:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, 'wb') as fh:
             fh.write(data)
         self.send_response(200)
         self.send_header('Content-Type', 'text/plain')
         self.end_headers()
-        self.wfile.write(f'saved {name} ({len(data)} bytes)'.encode())
+        self.wfile.write(f'saved {rel} ({len(data)} bytes)'.encode())
 
 
 if __name__ == '__main__':

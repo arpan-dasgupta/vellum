@@ -2,32 +2,69 @@
 <meta charset="utf-8">
 <title>Vellum batch export</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-<!-- Local dev tool. Needs tools/devserver.py (POST /save).
-     export.html?preset=fow  exports the Fog of War boards to exports/ as SVG + PNG. -->
+<!-- Local dev tool. Needs tools/devserver.py, which serves this page and saves what it renders.
+
+     export.html?jobs=<jobs.json>
+       Renders the layers a jobs file lists to SVG and PNG. See "Batch export" in README.md.
+     export.html?review=<annotations.json>[&doc=<document.json>][&bare=1]
+       Renders each open annotation on its own, cropped around it, into .tmp/review/.
+       doc defaults to startDocument in vellum.config.json; bare=1 leaves the annotation out.
+
+     When it finishes, the page sets document.body.dataset.done to "1", or to "error". -->
 <style>body{font:14px/1.5 system-ui;margin:24px}pre{white-space:pre-wrap}</style>
 <script src="core.js"></script>
 <h1>Vellum batch export</h1>
 <pre id="log">starting…</pre>
 <script>
-const SLUGS = ['start', '1-e4', '1-Nf6', '2-Nc3', '2-d6', '3-Bb5', '3-g6', '4-Bxe8'];
-const PRESETS = {
-  fow: [
-    ...SLUGS.map((s, k) => ({ page: 'page-real', nodes: [`real-panel-${k}`], file: `real-${k}-${s}`, pad: 24, bg: '#F9F9F9', scale: 2 })),
-    { page: 'page-real', nodes: ['real-section'], file: 'real-positions-all', pad: 0, scale: 1 },
-    { page: 'page-view', nodes: ['fog-section'], file: 'whites-view-all', pad: 0, scale: 1 },
-    { page: 'page-view', nodes: ['start-section'], file: 'whites-view-start', pad: 0, scale: 2 },
-  ],
-};
 const log = (s) => { document.getElementById('log').textContent += '\n' + s; };
-async function save(name, data) {
-  const r = await fetch('/save?name=' + encodeURIComponent(name), { method: 'POST', body: data });
-  if (!r.ok) throw new Error(`${name}: ${r.status}`);
+const dirOf = (p) => p.replace(/[^/]*$/, '');
+// Joins a relative path onto a folder, resolving "." and "..".
+function join(base, rel) {
+  const out = [];
+  for (const s of (base + rel).split('/')) {
+    if (s === '..') out.pop();
+    else if (s && s !== '.') out.push(s);
+  }
+  return out.join('/');
 }
-// Review: render each open annotation over the document, one image per annotation, so its
-// drawing can be understood visually before acting on it.
-//   export.html?preset=review&ann=.tmp/ann.json   (ann = an annotations document from the artifact database)
-async function review(doc, ctx, fontCss, q) {
-  const ann = await (await fetch(q.get('ann') || '.tmp/ann.json')).json();
+async function getJSON(path) {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error(`${path}: ${r.status}`);
+  return r.json();
+}
+async function save(path, data) {
+  const r = await fetch('/save?path=' + encodeURIComponent(path), { method: 'POST', body: data });
+  if (!r.ok) throw new Error(`${path}: ${r.status}`);
+}
+const canvas = document.createElement('canvas').getContext('2d');
+const makeCtx = (doc) => ({ index: VellumCore.buildIndex(doc), measure: (t, f) => { canvas.font = f; return canvas.measureText(t).width; } });
+
+// Jobs file: { "doc": "<document.json>", "out": "<folder>", "jobs": [{ "nodes": [ids], "file", "pad", "bg", "scale" }] }
+// "doc" and "out" are relative to the jobs file. Each job writes <out>/<file>.svg and .png.
+async function runJobs(jobsPath, fontCss) {
+  const spec = await getJSON(jobsPath);
+  const base = dirOf(jobsPath);
+  const ctx = makeCtx(await getJSON(join(base, spec.doc)));
+  const out = join(base, spec.out || 'exports');
+  for (const j of spec.jobs) {
+    const nodes = j.nodes.map((id) => ctx.index.map.get(id));
+    const missing = j.nodes.filter((id, i) => !nodes[i]);
+    if (missing.length) throw new Error(`${j.file}: no layer with id ${missing.join(', ')}`);
+    const svg = VellumCore.exportSVG(nodes, ctx, { padding: j.pad || 0, background: j.bg, fontCss, title: nodes[0].name });
+    await save(`${out}/${j.file}.svg`, svg);
+    const png = await VellumCore.svgToPng(svg, j.scale || 1);
+    await save(`${out}/${j.file}.png`, png);
+    log(`${out}/${j.file}: svg ${Math.round(svg.length / 1024)} KB, png ${Math.round(png.size / 1024)} KB`);
+  }
+}
+
+// Review: one image per open annotation, showing only that annotation over the document, so
+// each drawing can be understood on its own before acting on it.
+async function review(annPath, q, fontCss) {
+  const docPath = q.get('doc') || (await getJSON('vellum.config.json')).startDocument;
+  const doc = await getJSON(docPath);
+  const ctx = makeCtx(doc);
+  const ann = await getJSON(annPath);
   const pg = doc.pages.find((p) => p.id === ann.pageId) || doc.pages[0];
   const strip = (n) => { const c = { ...n }; delete c.about; if (c.children) c.children = c.children.map(strip); return c; };
   const items = ann.items.map(strip);
@@ -38,99 +75,36 @@ async function review(doc, ctx, fontCss, q) {
   const open = items.filter((n) => n.status !== 'resolved');
   const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   const run = Date.now().toString(36);  // unique names per run, so image viewers never show a stale copy
+  const bare = !!q.get('bare');
   const overview = VellumCore.exportSVG(pg.children, ctx, { padding: 20, background: '#FFFFFF', fontCss });
-  await save(`_review-${run}-overview.png`, await VellumCore.svgToPng(overview, 0.5));
-  log(`overview: ${open.length} open annotation(s)`);
+  await save(`.tmp/review/${run}-overview.png`, await VellumCore.svgToPng(overview, 0.5));
+  log(`.tmp/review/${run}-overview.png: ${open.length} open annotation(s)`);
   for (const n of open) {
     const b = VellumCore.bounds(n, ctx);
     const pad = 200;
     const crop = { x: b.x - pad, y: b.y - pad - 40, w: b.w + pad * 2, h: b.h + pad * 2 + 40 };
     // Show only this annotation, named above it, so other marks can't be confused with it.
     const tag = { id: 'review-tag', type: 'TEXT', name: 'tag', x: b.x, y: b.y - 34, text: n.name, fontSize: 22, fontWeight: 700, color: '#C0262D', autoWidth: true };
-    // ?bare=1 renders the same crop without the annotation, to check the result underneath it.
-    group.children = q.get('bare') ? [] : [n, tag];
+    group.children = bare ? [] : [n, tag];
     ctx.index = VellumCore.buildIndex(doc);
     const svg = VellumCore.exportSVG(pg.children, ctx, { bounds: crop, background: '#FFFFFF', fontCss });
     group.children = items;
     const scale = Math.min(1.5, 2200 / Math.max(crop.w, crop.h));
-    const file = `_review-${run}-${slug(n.name)}${q.get('bare') ? '-bare' : ''}.png`;
+    const file = `.tmp/review/${run}-${slug(n.name)}${bare ? '-bare' : ''}.png`;
     await save(file, await VellumCore.svgToPng(svg, scale));
     log(`${file}: ${Math.round(crop.w)} × ${Math.round(crop.h)} at ${scale.toFixed(2)}x`);
   }
-  log('done');
-  document.body.dataset.done = '1';
-}
-
-// Robot head frames for samples/assets/robot-thinking.gif (an original drawing).
-// Saves exports/_robot-NN.png; tools/make_gif.py turns them into the GIF.
-async function robotFrames() {
-  const N = 24, SIZE = 160, k = SIZE / 144;
-  const lerp = (a, b, t) => a + (b - a) * t;
-  const mix = (c1, c2, t) => '#' + [0, 2, 4].map((i) => Math.round(lerp(parseInt(c1.slice(1 + i, 3 + i), 16), parseInt(c2.slice(1 + i, 3 + i), 16), t)).toString(16).padStart(2, '0')).join('');
-  for (let f = 0; f < N; f++) {
-    const cv = document.createElement('canvas');
-    cv.width = cv.height = SIZE;
-    const g = cv.getContext('2d');
-    g.scale(k, k);
-    g.lineJoin = 'round';
-    g.lineCap = 'round';
-    const rr = (x, y, w, h, r, fill, stroke, lw) => { g.beginPath(); g.roundRect(x, y, w, h, r); if (fill) { g.fillStyle = fill; g.fill(); } if (stroke) { g.strokeStyle = stroke; g.lineWidth = lw; g.stroke(); } };
-    const t = f / N;
-    // Antenna, with a light that pulses.
-    g.strokeStyle = '#475569'; g.lineWidth = 4;
-    g.beginPath(); g.moveTo(72, 36); g.lineTo(72, 18); g.stroke();
-    g.beginPath(); g.arc(72, 13, 7, 0, Math.PI * 2);
-    g.fillStyle = mix('#FDE68A', '#F59E0B', (Math.sin(t * Math.PI * 4) + 1) / 2); g.fill();
-    g.strokeStyle = '#475569'; g.lineWidth = 2; g.stroke();
-    // Neck, ears and head.
-    rr(60, 116, 24, 12, 3, '#94A3B8', '#334155', 2.5);
-    rr(14, 64, 16, 32, 5, '#94A3B8', '#334155', 2.5);
-    rr(114, 64, 16, 32, 5, '#94A3B8', '#334155', 2.5);
-    rr(26, 34, 92, 86, 18, '#E2E8F0', '#334155', 3);
-    // Face screen.
-    rr(38, 48, 68, 52, 10, '#0F172A');
-    // Eyes look left, toward the thought bubble, drift back a little, and blink.
-    const look = f < 12 ? -5 : f < 16 ? lerp(-5, -1, (f - 12) / 4) : f < 20 ? -1 : lerp(-1, -5, (f - 20) / 4);
-    const open = f === 18 || f === 19 ? 0.15 : 1;
-    for (const ex of [58, 86]) {
-      const h = 14 * open;
-      rr(ex - 6 + look, 66 - h / 2, 12, h, Math.min(6, h / 2), '#2DD4BF');
-    }
-    // Thinking dots: a wave running across three dots.
-    for (let i = 0; i < 3; i++) {
-      const phase = (f - i * 3 + N) % 9;
-      const on = phase < 4 ? 1 - phase / 4 : 0;
-      g.beginPath(); g.arc(62 + i * 10, 88, 3.2, 0, Math.PI * 2);
-      g.fillStyle = mix('#134E4A', '#5EEAD4', on); g.fill();
-    }
-    const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
-    await save(`_robot-${String(f).padStart(2, '0')}.png`, blob);
-  }
-  log(`robot: ${N} frames at ${SIZE}px`);
-  log('done');
-  document.body.dataset.done = '1';
 }
 
 (async () => {
   try {
     const q = new URLSearchParams(location.search);
-    const doc = await (await fetch(q.get('doc') || 'samples/fog-of-war.json')).json();
     await Promise.all(['400', '500', '600', '700'].map((w) => document.fonts.load(`${w} 16px Inter`)));
-    const c = document.createElement('canvas').getContext('2d');
-    const ctx = { index: VellumCore.buildIndex(doc), measure: (t, f) => { c.font = f; return c.measureText(t).width; } };
     const fontCss = await VellumCore.embeddedFontCss();
     log(fontCss ? `embedded Inter (${Math.round(fontCss.length / 1024)} KB)` : 'could not embed Inter; using @import');
-    if (q.get('preset') === 'review') { await review(doc, ctx, fontCss, q); return; }
-    if (q.get('preset') === 'robot') { await robotFrames(); return; }
-    const jobs = PRESETS[q.get('preset') || 'fow'];
-    for (const j of jobs) {
-      const nodes = j.nodes.map((id) => ctx.index.map.get(id));
-      const svg = VellumCore.exportSVG(nodes, ctx, { padding: j.pad, background: j.bg, fontCss, title: nodes[0].name });
-      await save(j.file + '.svg', svg);
-      const png = await VellumCore.svgToPng(svg, j.scale);
-      await save(j.file + '.png', png);
-      log(`${j.file}: svg ${Math.round(svg.length / 1024)} KB, png ${Math.round(png.size / 1024)} KB`);
-    }
+    if (q.get('review')) await review(q.get('review'), q, fontCss);
+    else if (q.get('jobs')) await runJobs(q.get('jobs'), fontCss);
+    else throw new Error('pass ?jobs=<jobs.json> or ?review=<annotations.json>');
     log('done');
     document.body.dataset.done = '1';
   } catch (e) {
