@@ -1,21 +1,23 @@
-"""Build samples/fog-of-war.json: a Vellum replica of the FigJam Fog of War boards.
+"""Build the Fog of War diagram: fog-of-war.json (the Vellum document) and export-jobs.json.
 
 Page 1 "White's view" holds the single starting board and the first moves of the game as
 White sees them (VIEW_BOARDS boards). Page 2 "Real positions" shows the whole seven-move
-game with the fog lifted.
+game with the fog lifted. README.md in this folder explains the diagram and its decisions.
 
-Run: python3 tools/build_fow.py
+Run: python3 diagrams/fog-of-war/build.py
 """
 import base64
 import hashlib
 import json
 import math
 import os
+import re
 
 FILES = 'abcdefgh'
 HERE = os.path.dirname(os.path.abspath(__file__))
 SAMPLE_VERSION = 17  # bump when the sample changes, so the editor offers the new version
-OUT = os.path.join(HERE, '..', 'samples', 'fog-of-war.json')
+OUT = os.path.join(HERE, 'fog-of-war.json')
+JOBS = os.path.join(HERE, 'export-jobs.json')  # what export.html?jobs=diagrams/fog-of-war/export-jobs.json renders
 
 # ---------- chess logic (pseudo-legal moves, no check: Fog of War rules) ----------
 
@@ -587,7 +589,7 @@ BEAM_W = 8 * BEAM_S
 BEAM_H = 3 * BEAM_W + 2 * BEAM_GAP + 2 * BEAM_PAD
 BUBBLE_PAD, BUBBLE_BUMP = 24, 14  # the thought bubble around the first thought-out board
 ROBOT = 120        # size of the robot head thinking about it
-ROBOT_GIF = os.path.join(HERE, '..', 'samples', 'assets', 'robot-thinking.gif')
+ROBOT_GIF = os.path.join(HERE, 'assets', 'robot-thinking.gif')  # drawn by robot-frames.html
 
 
 def thought_board(after, cx, y, bid):
@@ -740,6 +742,7 @@ def main():
            'pages': [fog_page, real_page]}
     with open(OUT, 'w') as fh:
         json.dump(doc, fh, ensure_ascii=False, separators=(',', ':'))
+    write_export_jobs()
     count = [0]
 
     def cnt(lst):
@@ -749,6 +752,21 @@ def main():
     for pg in doc['pages']:
         cnt(pg['children'])
     print(f'wrote {OUT} ({os.path.getsize(OUT) // 1024} KB, {count[0]} nodes)')
+
+
+def write_export_jobs():
+    """Every real position on its own, both pages whole, and the lone start board."""
+    slugs = ['start'] + [re.sub(r'[.…]\s*', '-', label) for _, _, label in PLIES]  # '1… Nf6' -> '1-Nf6'
+    jobs = [{'nodes': [f'real-panel-{k}'], 'file': f'real-{k}-{s}', 'pad': 24, 'bg': SECTION_FILL, 'scale': 2}
+            for k, s in enumerate(slugs)]
+    jobs += [
+        {'nodes': ['real-section'], 'file': 'real-positions-all', 'pad': 0, 'scale': 1},
+        {'nodes': ['fog-section'], 'file': 'whites-view-all', 'pad': 0, 'scale': 1},
+        {'nodes': ['start-section'], 'file': 'whites-view-start', 'pad': 0, 'scale': 2},
+    ]
+    with open(JOBS, 'w') as fh:
+        json.dump({'doc': 'fog-of-war.json', 'out': 'exports', 'jobs': jobs}, fh, ensure_ascii=False, indent=2)
+        fh.write('\n')
 
 
 if __name__ == '__main__':

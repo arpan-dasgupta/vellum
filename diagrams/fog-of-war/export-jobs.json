@@ -1,0 +1,102 @@
+{
+  "doc": "fog-of-war.json",
+  "out": "exports",
+  "jobs": [
+    {
+      "nodes": [
+        "real-panel-0"
+      ],
+      "file": "real-0-start",
+      "pad": 24,
+      "bg": "#F9F9F9",
+      "scale": 2
+    },
+    {
+      "nodes": [
+        "real-panel-1"
+      ],
+      "file": "real-1-1-e4",
+      "pad": 24,
+      "bg": "#F9F9F9",
+      "scale": 2
+    },
+    {
+      "nodes": [
+        "real-panel-2"
+      ],
+      "file": "real-2-1-Nf6",
+      "pad": 24,
+      "bg": "#F9F9F9",
+      "scale": 2
+    },
+    {
+      "nodes": [
+        "real-panel-3"
+      ],
+      "file": "real-3-2-Nc3",
+      "pad": 24,
+      "bg": "#F9F9F9",
+      "scale": 2
+    },
+    {
+      "nodes": [
+        "real-panel-4"
+      ],
+      "file": "real-4-2-d6",
+      "pad": 24,
+      "bg": "#F9F9F9",
+      "scale": 2
+    },
+    {
+      "nodes": [
+        "real-panel-5"
+      ],
+      "file": "real-5-3-Bb5",
+      "pad": 24,
+      "bg": "#F9F9F9",
+      "scale": 2
+    },
+    {
+      "nodes": [
+        "real-panel-6"
+      ],
+      "file": "real-6-3-g6",
+      "pad": 24,
+      "bg": "#F9F9F9",
+      "scale": 2
+    },
+    {
+      "nodes": [
+        "real-panel-7"
+      ],
+      "file": "real-7-4-Bxe8",
+      "pad": 24,
+      "bg": "#F9F9F9",
+      "scale": 2
+    },
+    {
+      "nodes": [
+        "real-section"
+      ],
+      "file": "real-positions-all",
+      "pad": 0,
+      "scale": 1
+    },
+    {
+      "nodes": [
+        "fog-section"
+      ],
+      "file": "whites-view-all",
+      "pad": 0,
+      "scale": 1
+    },
+    {
+      "nodes": [
+        "start-section"
+      ],
+      "file": "whites-view-start",
+      "pad": 0,
+      "scale": 2
+    }
+  ]
+}

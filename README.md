@@ -128,32 +128,10 @@ With the dev server running, `export.html?jobs=<jobs.json>` renders layers to SV
 
 The browser console exposes `window.vellum` (`doc`, `selection`, `select`, `mutate`, `exportSVG`) for scripting.
 
-## Sample: Fog of War boards
+## Diagrams
 
-The editor opens with `samples/fog-of-war.json`, a Fog of War chess game drawn as Vellum layers. The game is `1. e4 Nf6 2. Nc3 d6 3. Bb5 g6 4. Bxe8`, where Black's moves are invisible to White and White ends it by capturing the king. White's view shows its first four moves as five boards (`VIEW_BOARDS` in `tools/build_fow.py`); a snapshot of the earlier eight-board version is in `exports/snapshots/`.
+Diagrams made with Vellum live in `diagrams/`, one folder each. A folder holds the diagram's build script, its document, its export jobs, its rendered exports and a README explaining it. None of it is part of the app.
 
-- **White's view.** Each position exactly as White sees it, with fogged squares where no White piece could move.
-  - **Moves.** Arrows between boards carry each White move, labelled, with the piece that moved above; Black's hidden moves are dashed arrows.
-  - **Next-state prediction.** Amber arcs over the top run from each fogged state to the next.
-  - **Embeddings.** Under each board is a 16-value embedding vector, fed by an arrow from its own board. A teal context rail runs between the columns: each column branches into it and it merges into every later column, so each embedding draws on all earlier states. The values are illustrative, derived from what White can see, so they repeat after each hidden Black move.
-  - **Real positions.** Below the vectors, a blue-and-black board shows where every piece really stood.
-  - **Possible moves.** Each hidden Black move drops into a brace holding a row of Black's possible moves in that position, with the move actually played in the middle and slightly bigger.
-- **Real positions.** The whole seven-move game on classic boards with the fog lifted.
+- **[Fog of War](diagrams/fog-of-war/README.md).** A Fog of War chess game drawn to show how a model plays with hidden information. It covers next-observation prediction, embeddings aligned with the real state, and sampling of candidate histories for hidden moves. It is the editor's starting document.
 
-![White's view with the real positions underneath](exports/whites-view-all.png)
-
-![The real positions without fog](exports/real-positions-all.png)
-
-The chess pieces are original vector drawings, so exports look the same on any machine.
-
-### Regenerate the sample
-
-```bash
-python3 tools/build_fow.py
-```
-
-`tools/build_fow.py` plays the moves, works out which squares White can see under Fog of War rules (every pseudo-legal destination, with no check), and writes the document. Bump `SAMPLE_VERSION` when the sample changes; the editor then replaces an autosaved older copy and keeps the old one a single undo away.
-
-### Re-export the images
-
-With the dev server running, open http://127.0.0.1:8765/export.html?preset=fow. It renders each board and both full rows in the browser, then saves SVG and PNG files into `exports/`.
+![The Fog of War diagram, White's view](diagrams/fog-of-war/exports/whites-view-all.png)
