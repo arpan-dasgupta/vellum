@@ -14,7 +14,7 @@ import os
 
 FILES = 'abcdefgh'
 HERE = os.path.dirname(os.path.abspath(__file__))
-SAMPLE_VERSION = 11  # bump when the sample changes, so the editor offers the new version
+SAMPLE_VERSION = 13  # bump when the sample changes, so the editor offers the new version
 OUT = os.path.join(HERE, '..', 'samples', 'fog-of-war.json')
 
 # ---------- chess logic (pseudo-legal moves, no check: Fog of War rules) ----------
@@ -276,7 +276,7 @@ def piece(side, kind, sqname, x, y, size, theme=CLASSIC):
             'paths': [{'role': r, 'd': d} for r, d in spec['paths']]}
 
 
-def board_nodes(ox, oy, S, pos, fog, board_id, whole_fog_rect=False, theme=CLASSIC):
+def board_nodes(ox, oy, S, pos, fog, board_id, whole_fog_rect=False, theme=CLASSIC, coords=True):
     """Board backing, squares, coordinates, pieces and (optionally) fog for one position."""
     board, vis = pos['board'], pos['vis']
     # In White's view only White's own last move is highlighted; Black's move stays secret.
@@ -295,9 +295,9 @@ def board_nodes(ox, oy, S, pos, fog, board_id, whole_fog_rect=False, theme=CLASS
             squares.append(rect(nm, x, y, S, S, col))
             lab_col = theme['label_on_dark'] if dark else theme['label_on_light']
             fs = 11 if S < 70 else 14
-            if f == 0:
+            if coords and f == 0:
                 labels.append(text(f'Rank {r}', x + 3, y + 2, str(r), fs, 500, lab_col))
-            if r == 1:
+            if coords and r == 1:
                 labels.append(text(f'File {FILES[f]}', x + S - 23, y + S - fs * 1.21 - 2, FILES[f], fs, 500, lab_col,
                                    w=20, align='right'))
             if fog and not whole_fog_rect and nm not in vis:
@@ -409,15 +409,15 @@ REAL_TEXT = [
     ('4. Bxe8', 'The king is captured and the game ends, with 15 Black pieces still on the board.'),
 ]
 
-S, BW, PAD, GAP, TOP = 56, 448, 48, 180, 210
-FOG_TOP = 300    # the fogged row sits lower, leaving room for the prediction arcs above it
-EMB_GAP = 150    # from the bottom of a fogged board to its embedding vector (room for the context arrows)
-REAL_GAP = 230   # from the bottom of a fogged board to the real-position label below it
+S, BW, PAD, GAP, TOP = 56, 448, 48, 220, 210
+FOG_TOP = 340    # the fogged row sits lower, leaving room for the prediction arcs and their label
+EMB_GAP = 190    # from the bottom of a fogged board to its embedding vector (room for the rail and its label)
+REAL_GAP = 270   # from the bottom of a fogged board to the real-position label below it
 MOVE_GAP = 20    # space between a move arrow and the boards it joins
 MOVE_ICON = 80   # size of the moved piece drawn above a White move arrow
 BRACE_W, BRACE_H = 460, 40   # the brace under each hidden move, where its possible moves will go
-BRACE_GAP = 70               # from the bottom of the real-position boards to the braces
-POSSIBLE_SPACE = 18 + 72 + 4 + 22 + 64 + 8 * 34 + 40 + 60  # possible moves, then the thought-out board and its bubble
+BRACE_GAP = 100              # from the bottom of the real-position boards to the braces (room for label 4)
+POSSIBLE_SPACE = 18 + 72 + 4 + 22 + 64 + (3 * 176 + 2 * 14 + 2 * 10) + 40 + 60  # moves, then the beam and its bubble
 MOVE_PIECE = {'1. e4': 'P', '2. Nc3': 'N', '3. Bb5': 'B', '4. Bxe8': 'B'}  # the White piece that moved
 HEAD_W = {'1…': 33.1, '2…': 37.9, '3…': 37.7}  # measured Inter Semi Bold 24px widths
 REAL_LABELS = ['Real position: start', 'Real position after 1. e4', 'Real position after 1… Nf6',
@@ -487,17 +487,23 @@ def sequence_section(title, intro, move_line, texts, fogged, prefix):
                     'from': {'id': a['id'], 'side': 'CENTER'}, 'to': {'id': br['id'], 'side': 'TOP'},
                     'gap': [8, 6], 'stroke': GREY, 'strokeWidth': 3, 'dash': '12 7', 'headSize': 16, 'arrow': True}
             row_y = by_ + BRACE_H + 18
-            row, pickd = possible_moves_row(pos[k], PLIES[k][:2], gcx, row_y, WRONG_CHOICE.get(k))
+            row, pickd, real, shown, moves = possible_moves_row(pos[k], PLIES[k][:2], gcx, row_y, WRONG_CHOICE.get(k))
             tb_y = row_y + 72 + 4 + 22 + THOUGHT_GAP
-            # The thought-out board follows the model's choice, right or wrong.
-            imagined = pos[k + 1] if (pickd[0], pickd[1]) == tuple(PLIES[k][:2]) else apply_move(pos[k], pickd)
-            tb = thought_board(imagined, gcx, tb_y, f'{prefix}-thought-{k}')
+            # A beam of three candidate histories: the model's choice on top, then two more. The one
+            # matching the move actually played is outlined in green.
+            if pickd is real:
+                cands = [pickd, shown[1], shown[3]]
+            else:
+                cands = [pickd, real] + [m for m in shown if m is not pickd and m is not real][:1]
+            beam = beam_stack(cands, real, pos[k], moves, gcx, tb_y, f'{prefix}-beam-{k}')
             parts = [a, down, br, row]
             if k == 1:
-                # The first thought-out board sits in a thought bubble, thought by a robot on its right.
-                parts.append(thinking(gcx - 4 * THOUGHT_S, tb_y, 8 * THOUGHT_S, tb))
+                # The first beam sits in a thought bubble, thought by a robot on its right.
+                parts.append(thinking(gcx - BEAM_W / 2 - BEAM_PAD, tb_y - BEAM_PAD, BEAM_W + 2 * BEAM_PAD, BEAM_H, beam))
+                # Label 4, beside the grey arrow and just above the brace.
+                parts.append(text('Label 4', gcx + 14, by_ - 48, '4. Sampling of candidate histories', 22, 600, GREY))
             else:
-                parts.append(tb)
+                parts.append(beam)
             kids.append(group(f'Hidden move {labels[k]}', parts))
             continue
         # White moves carry the moving piece above the arrow.
@@ -509,6 +515,7 @@ def sequence_section(title, intro, move_line, texts, fogged, prefix):
         kids.append(group(f'Move {labels[k]}', [a, pc]))
     if fogged:
         kids.append(group('Next-state predictions', [prediction_arc(board_ids[k], board_ids[k + 1], k) for k in range(7)]))
+        kids.append(section_labels(top))
         # Context rail: each column's board-to-embedding line branches right into a shared rail,
         # and the rail merges down into every later column's line, so the embedding at i draws on
         # all the states before it. Straight runs with rounded corners.
@@ -551,26 +558,27 @@ def possible_moves_row(before, played, cx, y, chosen=None):
     others = [m for m in moves if m is not real and m is not pickd]
     pick = [others[round(i * (len(others) - 1) / 3)] for i in range(4)]  # spread across the list
     shown = pick[:2] + [real] + pick[2:] if pickd is real else pick[:2] + [pickd, real] + pick[2:3]
-    slot, small, big = 76, 44, 72
+    slot, size, row_h = 76, 50, 72  # every move the same size; nothing is singled out as chosen
     total = len(shown) * slot
     x0 = cx - total / 2
     nodes = [text('More moves', x0 - 30, y + 8, '…', 28, 600, GREY),
              text('More moves', x0 + total + 6, y + 8, '…', 28, 600, GREY)]
     for i, m in enumerate(shown):
-        is_real, is_chosen = m is real, m is pickd
-        size = big if is_chosen else small
+        is_real = m is real
         mx = x0 + i * slot + slot / 2
-        pc = piece('b', m[2], m[1], mx - size / 2, y + (big - size) / 2, size, CORRECT if is_real else CLASSIC)
-        pc['name'] = ('Chosen' if is_chosen else 'Possible') + (' and correct' if is_real and is_chosen else ' (correct)' if is_real else '') + ': ' + san(m, moves)
-        lab = text('Move', mx - slot / 2, y + big + 4, san(m, moves), 17 if is_chosen else 13,
-                   700 if (is_chosen or is_real) else 500, CORRECT_TEXT if is_real else CHAR if is_chosen else GREY,
-                   w=slot, align='center')
+        pc = piece('b', m[2], m[1], mx - size / 2, y + (row_h - size) / 2, size, CORRECT if is_real else CLASSIC)
+        pc['name'] = ('Correct: ' if is_real else 'Possible: ') + san(m, moves)
+        lab = text('Move', mx - slot / 2, y + row_h + 4, san(m, moves), 14, 700 if is_real else 500,
+                   CORRECT_TEXT if is_real else GREY, w=slot, align='center')
         nodes += [pc, lab]
-    return group(f'Possible moves ({len(moves)} in all)', nodes), pickd
+    return group(f'Possible moves ({len(moves)} in all)', nodes), pickd, real, shown, moves
 
 
-THOUGHT_S = 34   # square size of the "thought out" board under each played hidden move
-THOUGHT_GAP = 64  # from the played move's label down to that board
+THOUGHT_S = 34   # square size of a single "thought out" board
+THOUGHT_GAP = 64  # from the played move's label down to the beam
+BEAM_S, BEAM_GAP, BEAM_PAD = 22, 14, 10  # the beam of three candidate boards
+BEAM_W = 8 * BEAM_S
+BEAM_H = 3 * BEAM_W + 2 * BEAM_GAP + 2 * BEAM_PAD
 BUBBLE_PAD, BUBBLE_BUMP = 24, 14  # the thought bubble around the first thought-out board
 ROBOT = 120        # size of the robot head thinking about it
 ROBOT_GIF = os.path.join(HERE, '..', 'samples', 'assets', 'robot-thinking.gif')
@@ -619,16 +627,29 @@ def cloud_path(w, h, r, step, bump):
     return d + ' Z'
 
 
-def thinking(bx, by, size, board_group):
-    """Wrap a board in a thought bubble whose trail of dots leads right to an animated robot head."""
-    w = h = size + 2 * BUBBLE_PAD
+def beam_stack(cands, real, before, moves, cx, y, bid):
+    """Three small boards stacked on a light band, one per candidate move."""
+    nodes = [rect('Beam', cx - BEAM_W / 2 - BEAM_PAD, y - BEAM_PAD, BEAM_W + 2 * BEAM_PAD, BEAM_H, '#E9EEF5', radius=14)]
+    for i, mv in enumerate(cands):
+        by = y + i * (BEAM_W + BEAM_GAP)
+        board = board_nodes(cx - BEAM_W / 2, by, BEAM_S, apply_move(before, mv), False, f'{bid}-{i}', theme=BLUE, coords=False)
+        nodes.append(group(f'Candidate {i + 1}: {san(mv, moves)}', board))
+        if mv is real:
+            nodes.append(rect('Correct candidate', cx - BEAM_W / 2 - 3, by - 3, BEAM_W + 6, BEAM_W + 6, None,
+                              stroke='#16A34A', strokeWidth=3, radius=3))
+    return group('Beam of candidate histories', nodes, id=bid)
+
+
+def thinking(bx, by, cw, ch, content):
+    """Wrap content in a thought bubble whose trail of dots leads right to an animated robot head."""
+    w, h = cw + 2 * BUBBLE_PAD, ch + 2 * BUBBLE_PAD
     x, y = bx - BUBBLE_PAD - BUBBLE_BUMP, by - BUBBLE_PAD - BUBBLE_BUMP
-    total = w + 2 * BUBBLE_BUMP
-    bubble = {'id': nid('pc'), 'type': 'PATH', 'name': 'Thought bubble', 'x': x, 'y': y, 'w': total, 'h': total,
-              'vw': total, 'vh': total, 'fill': WHITE, 'stroke': '#9CA3AF', 'detail': '#9CA3AF', 'strokeWidth': 2.5,
+    tw, th = w + 2 * BUBBLE_BUMP, h + 2 * BUBBLE_BUMP
+    bubble = {'id': nid('pc'), 'type': 'PATH', 'name': 'Thought bubble', 'x': x, 'y': y, 'w': tw, 'h': th,
+              'vw': tw, 'vh': th, 'fill': WHITE, 'stroke': '#9CA3AF', 'detail': '#9CA3AF', 'strokeWidth': 2.5,
               'paths': [{'role': 'body', 'd': cloud_path(w, h, 60, 46, BUBBLE_BUMP)}]}
-    right = x + total
-    cy = by + size * 0.62
+    right = x + tw
+    cy = by + ch * 0.45
     dots = []
     for i, (dx, r) in enumerate([(16, 12), (44, 9), (66, 6)]):
         dots.append({'id': nid(), 'type': 'ELLIPSE', 'name': f'Thought trail {i + 1}', 'x': right + dx - r,
@@ -637,11 +658,36 @@ def thinking(bx, by, size, board_group):
         src = 'data:image/gif;base64,' + base64.b64encode(fh.read()).decode()
     robot = {'id': nid(), 'type': 'IMAGE', 'name': 'Robot thinking (animated GIF)', 'x': right + 76,
              'y': cy + 20 - ROBOT * 0.55, 'w': ROBOT, 'h': ROBOT, 'src': src}
-    return group('Thinking robot', [bubble, board_group] + dots + [robot])
+    return group('Thinking robot', [bubble, content] + dots + [robot])
+
+
+def section_labels(top):
+    """Labels 1 to 3, each in the colour of what it names, placed in space kept free for them."""
+    col = lambda k: SEQ_X + PAD + k * (BW + GAP)
+    board_top = SEQ_Y + top + 44
+    nodes = []
+    # 1. Over the first three prediction arcs, with a bracket showing the span.
+    x1, x2 = col(0) + 0.82 * BW, col(3) + 0.19 * BW
+    by = board_top - 80 - 24
+    d = f'M0,10 V0 H{x2 - x1:.1f} V10'
+    nodes.append({'id': nid('pc'), 'type': 'PATH', 'name': 'Label 1 span', 'x': x1, 'y': by, 'w': x2 - x1, 'h': 10,
+                  'vw': x2 - x1, 'vh': 10, 'fill': None, 'stroke': PREDICT, 'detail': PREDICT, 'strokeWidth': 2,
+                  'paths': [{'role': 'ink', 'd': d}]})
+    nodes.append(text('Label 1', x1, by - 42, '1. Next observation prediction', 26, 600, PREDICT, w=x2 - x1, align='center'))
+    # 2. Above the context rail, between the first two columns.
+    rail_y = board_top + BW + EMB_GAP * 0.58
+    c0, c1 = col(0) + BW / 2, col(1) + BW / 2
+    nodes.append(text('Label 2', c0 + 40, rail_y - 20 - 44, '2. Aligning representations with underlying state', 22, 600,
+                      CONTEXT, w=c1 - c0 - 80, align='center'))
+    # 3. Under the 2. Nc3 move arrow, wrapped to the gap between the boards.
+    gx = col(2) + BW
+    nodes.append(text('Label 3', gx + 10, board_top + BW / 2 + 28, '3. Policy and Value function learned through RL self-play',
+                      18, 600, CHAR, w=GAP - 20, align='center', lineHeight=1.3))
+    return group('Labels', nodes)
 
 
 def context_rail(x0, board_bottom):
-    rail_y = board_bottom + EMB_GAP * 0.48
+    rail_y = board_bottom + EMB_GAP * 0.58
     r = 20
     cx = [x0 + k * (BW + GAP) + BW / 2 for k in range(8)]
     left, top = cx[0], rail_y - r
