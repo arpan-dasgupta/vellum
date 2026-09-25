@@ -94,7 +94,7 @@ The browser console exposes `window.vellum` (`doc`, `selection`, `select`, `muta
 
 ## Sample: Fog of War boards
 
-The editor opens with `samples/fog-of-war.json`, a seven-move Fog of War chess game drawn as Vellum layers. The game is `1. e4 Nf6 2. Nc3 d6 3. Bb5 g6 4. Bxe8`, where Black's moves are invisible to White and White ends it by capturing the king.
+The editor opens with `samples/fog-of-war.json`, a Fog of War chess game drawn as Vellum layers. The game is `1. e4 Nf6 2. Nc3 d6 3. Bb5 g6 4. Bxe8`, where Black's moves are invisible to White and White ends it by capturing the king. White's view shows its first four moves as five boards (`VIEW_BOARDS` in `tools/build_fow.py`); a snapshot of the earlier eight-board version is in `exports/snapshots/`.
 
 - **White's view.** Each position exactly as White sees it, with fogged squares where no White piece could move.
   - **Moves.** Arrows between boards carry each White move, labelled, with the piece that moved above; Black's hidden moves are dashed arrows.
@@ -102,7 +102,7 @@ The editor opens with `samples/fog-of-war.json`, a seven-move Fog of War chess g
   - **Embeddings.** Under each board is a 16-value embedding vector, fed by an arrow from its own board. A teal context rail runs between the columns: each column branches into it and it merges into every later column, so each embedding draws on all earlier states. The values are illustrative, derived from what White can see, so they repeat after each hidden Black move.
   - **Real positions.** Below the vectors, a blue-and-black board shows where every piece really stood.
   - **Possible moves.** Each hidden Black move drops into a brace holding a row of Black's possible moves in that position, with the move actually played in the middle and slightly bigger.
-- **Real positions.** The same seven moves on classic boards with the fog lifted.
+- **Real positions.** The whole seven-move game on classic boards with the fog lifted.
 
 ![White's view with the real positions underneath](exports/whites-view-all.png)
 

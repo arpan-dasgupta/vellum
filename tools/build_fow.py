@@ -1,8 +1,8 @@
 """Build samples/fog-of-war.json: a Vellum replica of the FigJam Fog of War boards.
 
-Page 1 "White's view" mirrors the FigJam board: the single starting board and the
-7-move sequence as White sees it. Page 2 "Real positions" shows the same seven
-moves with the fog lifted.
+Page 1 "White's view" holds the single starting board and the first moves of the game as
+White sees them (VIEW_BOARDS boards). Page 2 "Real positions" shows the whole seven-move
+game with the fog lifted.
 
 Run: python3 tools/build_fow.py
 """
@@ -14,7 +14,7 @@ import os
 
 FILES = 'abcdefgh'
 HERE = os.path.dirname(os.path.abspath(__file__))
-SAMPLE_VERSION = 13  # bump when the sample changes, so the editor offers the new version
+SAMPLE_VERSION = 17  # bump when the sample changes, so the editor offers the new version
 OUT = os.path.join(HERE, '..', 'samples', 'fog-of-war.json')
 
 # ---------- chess logic (pseudo-legal moves, no check: Fog of War rules) ----------
@@ -409,14 +409,16 @@ REAL_TEXT = [
     ('4. Bxe8', 'The king is captured and the game ends, with 15 Black pieces still on the board.'),
 ]
 
-S, BW, PAD, GAP, TOP = 56, 448, 48, 220, 210
-FOG_TOP = 340    # the fogged row sits lower, leaving room for the prediction arcs and their label
-EMB_GAP = 190    # from the bottom of a fogged board to its embedding vector (room for the rail and its label)
-REAL_GAP = 270   # from the bottom of a fogged board to the real-position label below it
+S, BW, PAD, GAP, TOP = 56, 448, 48, 260, 210
+REAL_PAGE_GAP = 220  # board spacing on the Real positions page (White's view uses GAP, widened for the labels)
+FOG_TOP = 360    # the fogged row sits lower, leaving room for the prediction arcs and their label
+EMB_GAP = 250    # from the bottom of a fogged board to its embedding vector (room for the rail and its label)
+REAL_GAP = EMB_GAP + 36 + 44  # from the bottom of a fogged board to the blue real-position board below it
+RAIL_FRAC = 0.62  # the context rail's height within the gap between boards and vectors
 MOVE_GAP = 20    # space between a move arrow and the boards it joins
 MOVE_ICON = 80   # size of the moved piece drawn above a White move arrow
 BRACE_W, BRACE_H = 460, 40   # the brace under each hidden move, where its possible moves will go
-BRACE_GAP = 100              # from the bottom of the real-position boards to the braces (room for label 4)
+BRACE_GAP = 130              # from the bottom of the real-position boards to the braces (room for label 4)
 POSSIBLE_SPACE = 18 + 72 + 4 + 22 + 64 + (3 * 176 + 2 * 14 + 2 * 10) + 40 + 60  # moves, then the beam and its bubble
 MOVE_PIECE = {'1. e4': 'P', '2. Nc3': 'N', '3. Bb5': 'B', '4. Bxe8': 'B'}  # the White piece that moved
 HEAD_W = {'1…': 33.1, '2…': 37.9, '3…': 37.7}  # measured Inter Semi Bold 24px widths
@@ -426,11 +428,16 @@ REAL_LABELS = ['Real position: start', 'Real position after 1. e4', 'Real positi
 SEQ_X, SEQ_Y = 1000, 200
 
 
-def sequence_section(title, intro, move_line, texts, fogged, prefix):
-    pos = positions()
+VIEW_BOARDS = 5  # boards shown in White's view: start, 1. e4, 1…, 2. Nc3, 2…  (two hidden moves)
+
+
+def sequence_section(title, intro, move_line, texts, fogged, prefix, boards=8):
+    pos = positions()[:boards]
+    n = len(pos)
+    gap = GAP if fogged else REAL_PAGE_GAP  # the Real positions page keeps its own, tighter spacing
     kids = [
         text('Title', SEQ_X + PAD, SEQ_Y + 40, title, 40, 600),
-        text('Intro', SEQ_X + PAD, SEQ_Y + 98, intro, 16, 500, GREY, w=8 * BW + 7 * GAP),
+        text('Intro', SEQ_X + PAD, SEQ_Y + 98, intro, 16, 500, GREY, w=n * BW + (n - 1) * gap),
     ]
     lead = 'What actually happened:'
     ml = text('Move list', SEQ_X + PAD, SEQ_Y + 138, move_line, 24, 600)
@@ -440,7 +447,7 @@ def sequence_section(title, intro, move_line, texts, fogged, prefix):
     board_ids = []
     top = FOG_TOP if fogged else TOP
     for k, p in enumerate(pos):
-        ox, oy = SEQ_X + PAD + k * (BW + GAP), SEQ_Y + top
+        ox, oy = SEQ_X + PAD + k * (BW + gap), SEQ_Y + top
         by = oy + 44
         head_txt = texts[k][0]
         hidden = fogged and p['side'] == 'b'
@@ -465,14 +472,13 @@ def sequence_section(title, intro, move_line, texts, fogged, prefix):
                        'from': {'id': bid, 'side': 'BOTTOM'}, 'to': {'id': vid, 'side': 'TOP'},
                        'gap': [10, 10], 'stroke': CONTEXT, 'strokeWidth': 4, 'arrow': True})
             ry = by + BW + REAL_GAP
-            pk.append(text('Real position label', ox, ry, REAL_LABELS[k], 18, 600, CHAR, w=BW, align='center'))
-            pk.append(group('Real position', board_nodes(ox, ry + 34, S, p, False, f'{prefix}-real-board-{k}', theme=BLUE),
+            pk.append(group('Real position', board_nodes(ox, ry, S, p, False, f'{prefix}-real-board-{k}', theme=BLUE),
                             id=f'{prefix}-real-{k}'))
         kids.append(group(f'Position {k} · {head_txt}', pk, id=f'{prefix}-panel-{k}'))
     labels = ([t[0] for t in FOG_TEXT[1:]] if fogged else [t[0] for t in REAL_TEXT[1:]])
     if fogged:
         labels = ['1. e4', '1…', '2. Nc3', '2…', '3. Bb5', '3…', '4. Bxe8']
-    for k in range(7):
+    for k in range(n - 1):
         if not fogged:
             kids.append(arrow(board_ids[k], board_ids[k + 1], labels[k], False))
             continue
@@ -480,8 +486,8 @@ def sequence_section(title, intro, move_line, texts, fogged, prefix):
         a = arrow(board_ids[k], board_ids[k + 1], labels[k], hidden, gap=MOVE_GAP, width=5, show_label=not hidden)
         if hidden:
             # An unknown move drops down into a brace that will hold its possible moves.
-            gcx = SEQ_X + PAD + k * (BW + GAP) + BW + GAP / 2
-            by_ = SEQ_Y + top + 44 + BW + REAL_GAP + 34 + BW + BRACE_GAP
+            gcx = SEQ_X + PAD + k * (BW + gap) + BW + gap / 2
+            by_ = SEQ_Y + top + 44 + BW + REAL_GAP + BW + BRACE_GAP
             br = brace(f'Possible moves for {labels[k]}', gcx - BRACE_W / 2, by_)
             down = {'id': nid('c'), 'type': 'CONNECTOR', 'name': 'Into possible moves',
                     'from': {'id': a['id'], 'side': 'CENTER'}, 'to': {'id': br['id'], 'side': 'TOP'},
@@ -501,28 +507,28 @@ def sequence_section(title, intro, move_line, texts, fogged, prefix):
                 # The first beam sits in a thought bubble, thought by a robot on its right.
                 parts.append(thinking(gcx - BEAM_W / 2 - BEAM_PAD, tb_y - BEAM_PAD, BEAM_W + 2 * BEAM_PAD, BEAM_H, beam))
                 # Label 4, beside the grey arrow and just above the brace.
-                parts.append(text('Label 4', gcx + 14, by_ - 48, '4. Sampling of candidate histories', 22, 600, GREY))
+                parts.append(text('Label 4', gcx + 16, by_ - 74, '4. Sampling of candidate histories', 32, 600, GREY))
             else:
                 parts.append(beam)
             kids.append(group(f'Hidden move {labels[k]}', parts))
             continue
         # White moves carry the moving piece above the arrow.
-        mid_x = SEQ_X + PAD + k * (BW + GAP) + BW + GAP / 2
+        mid_x = SEQ_X + PAD + k * (BW + gap) + BW + gap / 2
         mid_y = SEQ_Y + top + 44 + BW / 2
         size = MOVE_ICON
         pc = piece('w', MOVE_PIECE[labels[k]], labels[k], mid_x - size / 2, mid_y - 16 - size, size)
         pc['name'] = f'Moved piece ({labels[k]})'
         kids.append(group(f'Move {labels[k]}', [a, pc]))
     if fogged:
-        kids.append(group('Next-state predictions', [prediction_arc(board_ids[k], board_ids[k + 1], k) for k in range(7)]))
+        kids.append(group('Next-state predictions', [prediction_arc(board_ids[k], board_ids[k + 1], k) for k in range(n - 1)]))
         kids.append(section_labels(top))
         # Context rail: each column's board-to-embedding line branches right into a shared rail,
         # and the rail merges down into every later column's line, so the embedding at i draws on
         # all the states before it. Straight runs with rounded corners.
-        kids.append(context_rail(SEQ_X + PAD, SEQ_Y + top + 44 + BW))
-    w = PAD * 2 + 8 * BW + 7 * GAP
-    h = (top + 44 + BW + REAL_GAP + 34 + BW + BRACE_GAP + BRACE_H + POSSIBLE_SPACE) if fogged else (top + 44 + BW + PAD)
-    return section('Fog of War — 7-move sequence' if fogged else 'Real positions', SEQ_X, SEQ_Y, w, h, kids,
+        kids.append(context_rail(SEQ_X + PAD, SEQ_Y + top + 44 + BW, n))
+    w = PAD * 2 + n * BW + (n - 1) * gap
+    h = (top + 44 + BW + REAL_GAP + BW + BRACE_GAP + BRACE_H + POSSIBLE_SPACE) if fogged else (top + 44 + BW + PAD)
+    return section(f'Fog of War — {n - 1}-move sequence' if fogged else 'Real positions', SEQ_X, SEQ_Y, w, h, kids,
                    id=f'{prefix}-section')
 
 
@@ -673,26 +679,25 @@ def section_labels(top):
     nodes.append({'id': nid('pc'), 'type': 'PATH', 'name': 'Label 1 span', 'x': x1, 'y': by, 'w': x2 - x1, 'h': 10,
                   'vw': x2 - x1, 'vh': 10, 'fill': None, 'stroke': PREDICT, 'detail': PREDICT, 'strokeWidth': 2,
                   'paths': [{'role': 'ink', 'd': d}]})
-    nodes.append(text('Label 1', x1, by - 42, '1. Next observation prediction', 26, 600, PREDICT, w=x2 - x1, align='center'))
-    # 2. Above the context rail, between the first two columns.
-    rail_y = board_top + BW + EMB_GAP * 0.58
+    nodes.append(text('Label 1', x1, by - 58, '1. Next observation prediction', 38, 600, PREDICT, w=x2 - x1, align='center'))
+    # 2. Just under the boards and above the context rail, between the first two columns' teal lines.
     c0, c1 = col(0) + BW / 2, col(1) + BW / 2
-    nodes.append(text('Label 2', c0 + 40, rail_y - 20 - 44, '2. Aligning representations with underlying state', 22, 600,
+    nodes.append(text('Label 2', c0 + 40, board_top + BW + 26, '2. Aligning representations with underlying state', 32, 600,
                       CONTEXT, w=c1 - c0 - 80, align='center'))
-    # 3. Under the 2. Nc3 move arrow, wrapped to the gap between the boards.
+    # 3. Under the 2. Nc3 move arrow, wrapped to the gap between the boards with a margin each side.
     gx = col(2) + BW
-    nodes.append(text('Label 3', gx + 10, board_top + BW / 2 + 28, '3. Policy and Value function learned through RL self-play',
-                      18, 600, CHAR, w=GAP - 20, align='center', lineHeight=1.3))
+    nodes.append(text('Label 3', gx + 20, board_top + BW / 2 + 30, '3. Policy and Value function learned through RL self-play',
+                      26, 600, CHAR, w=GAP - 40, align='center', lineHeight=1.25))
     return group('Labels', nodes)
 
 
-def context_rail(x0, board_bottom):
-    rail_y = board_bottom + EMB_GAP * 0.58
+def context_rail(x0, board_bottom, n):
+    rail_y = board_bottom + EMB_GAP * RAIL_FRAC
     r = 20
-    cx = [x0 + k * (BW + GAP) + BW / 2 for k in range(8)]
+    cx = [x0 + k * (BW + GAP) + BW / 2 for k in range(n)]
     left, top = cx[0], rail_y - r
     d = ''
-    for k in range(7):
+    for k in range(n - 1):
         a, b = cx[k] - left, cx[k + 1] - left
         # Leave column k's line, run right, and merge down into column k+1's line.
         d += (f'M{a:.1f},0 Q{a:.1f},{r} {a + r:.1f},{r} H{b - r:.1f} Q{b:.1f},{r} {b:.1f},{2 * r} ')
@@ -708,22 +713,21 @@ def start_section():
     kids = [text('Title', 240, 232, 'Fog of War — Starting position (White to move)', 24, 600)]
     kids += board_nodes(bx, by, S0, p0, True, 'start-board', whole_fog_rect=True)
     ry = by + 8 * S0 + 40
-    kids.append(text('Real position label', bx, ry, 'Real position: every piece, no fog', 18, 600, CHAR))
-    kids.append(group('Real position', board_nodes(bx, ry + 34, S0, p0, False, 'start-real-board', theme=BLUE),
+    kids.append(group('Real position', board_nodes(bx, ry, S0, p0, False, 'start-real-board', theme=BLUE),
                       id='start-real'))
-    h = ry + 34 + 8 * S0 + 40 - 200
+    h = ry + 8 * S0 + 40 - 200
     return section('Fog of War — Start', 200, 200, 720, h, kids, id='start-section')
 
 
 def main():
     fog_page = {'id': 'page-view', 'name': 'White’s view', 'children': [
         start_section(),
-        sequence_section('Fog of War: seven moves through White’s eyes',
+        sequence_section('Fog of War: four moves through White’s eyes',
                          'Each board is exactly what White sees after every move, White’s and Black’s. Fogged squares '
                          'are ones no White piece could move to. When Black moves, White learns nothing unless something '
                          'in view changes. Under each board, in blue, is where every piece really stood.',
-                         'What actually happened:   1. e4 Nf6    2. Nc3 d6    3. Bb5 g6    4. Bxe8',
-                         FOG_TEXT, True, 'fog'),
+                         'What actually happened:   1. e4 Nf6    2. Nc3 d6',
+                         FOG_TEXT, True, 'fog', boards=VIEW_BOARDS),
     ]}
     real_page = {'id': 'page-real', 'name': 'Real positions', 'children': [
         sequence_section('Fog of War: the real game, no fog',
