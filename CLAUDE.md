@@ -2,6 +2,8 @@
 
 Vellum is a general-purpose vector editor that runs in the browser with no build step. This repo holds the editor and, separately, the diagrams made with it. Everything needed to use and change both is written down here and in each diagram's README, so a new session can start without earlier context.
 
+Notes that belong to one checkout rather than the project, such as the URL of a published copy or where to push, go in `CLAUDE.local.md`. That file is git-ignored. Read it first if it exists.
+
 ## The app and the diagrams are separate
 
 | Part | Files | What it knows |
@@ -19,6 +21,7 @@ Vellum is a general-purpose vector editor that runs in the browser with no build
   - `exports/`, the rendered SVG and PNG files, which are committed.
   - `assets/`, the files the build script embeds.
 - There is one diagram so far, `diagrams/fog-of-war/`. Read its README before changing it.
+- `README.md` is a short overview for people new to Vellum, and `docs/reference.md` holds the details: shortcuts, the annotation tools, the document format, batch export and the annotation data. Keep the README short and put new detail in the reference. `docs/cover.png` is the README's cover image, and `docs/social-preview.png` is the same image at GitHub's social-preview size.
 
 ## Running things
 
@@ -51,10 +54,10 @@ Vellum is a general-purpose vector editor that runs in the browser with no build
 3. Rebuild with `python3 diagrams/<name>/build.py`. That also rewrites `export-jobs.json`.
 4. Re-export by opening `http://127.0.0.1:8765/export.html?jobs=diagrams/<name>/export-jobs.json` and waiting for `done`.
 5. Look at the result as described above, including full-size crops of everything you changed.
-6. Republish the artifact so the published copy matches, as described under "The published copy".
+6. If there is a published copy, republish it so it matches, as described under "Publishing as a Claude artifact".
 7. Show the user the main PNG inline and attach the SVG.
 
-What the user expects from diagrams in general:
+Diagram conventions in this repo:
 
 - **Labels.** Labels must be clean and readable in a clear font, and sit in free space with room around them. Make room by moving things apart rather than letting a label overlap anything. A label takes the colour of the thing it names.
 - **Separate styling.** Keep text off arrows unless asked. Give each kind of arrow its own colour.
@@ -67,9 +70,9 @@ What the user expects from diagrams in general:
 - `index.html` starts at `<title>` with no `<html>` or `<body>` tags. The artifact host wraps the page itself, and the dev server wraps it the same way locally. Keep it that way.
 - Test in the browser pane: load the editor, use the feature, and check `read_console_messages` for errors.
 
-## The published copy
+## Publishing as a Claude artifact
 
-The user's Vellum runs as a private Claude artifact: https://claude.ai/artifact/ATX36qp23R7zF8i4GU5nAd. It declares the `db` capability for annotations and `downloads` for exports. On republish, leave `capabilities` out so they carry forward.
+Vellum can run as a Claude artifact, where annotations sync to the artifact's database. The URL of an existing published copy, if there is one, is in `CLAUDE.local.md`. The artifact declares the `db` capability for annotations and `downloads` for exports. On a first publish, pass `capabilities: {"db": {}, "downloads": true}`. On a republish, leave `capabilities` out so they carry forward.
 
 To republish:
 
@@ -122,7 +125,7 @@ Work through them like this:
 
 ## Commits and pushes
 
-- Commit only when the user asks, and push only when they ask. The remote is `origin` (GitHub `arpan-dasgupta/vellum`, private), branch `main`.
+- Commit only when the user asks, and push only when they ask.
 - Keep app changes and diagram changes in separate commits. A diagram commit touches only `diagrams/<name>/`, plus a line in the README's diagram list when one is added. An app commit touches the app files and the root docs.
 - Commit subjects are sentence-case imperatives with no prefix, such as "Trim White's view to five boards and enlarge the labels". The body says what changed and why.
 - Never commit `.tmp/`.
