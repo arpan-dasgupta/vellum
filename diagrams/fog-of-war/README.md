@@ -123,7 +123,7 @@ Export jobs refer to these ids. Other ids are numbered in build order and change
 
 ## How it got here
 
-The user shaped the diagram through annotations on the published Vellum. These decisions are theirs, so keep them unless asked otherwise:
+The diagram was shaped through annotations on a published copy of Vellum. These decisions were the author's, so keep them unless asked otherwise:
 
 - **Moves.** Show every ply, including Black's, with nothing revealed about hidden moves. Center each piece in its square.
 - **Text.** No question marks, and no captions under the diagram. The only text on arrows is the move written on White's arrows.
