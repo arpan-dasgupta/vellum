@@ -15,7 +15,7 @@ import re
 
 FILES = 'abcdefgh'
 HERE = os.path.dirname(os.path.abspath(__file__))
-SAMPLE_VERSION = 17  # bump when the sample changes, so the editor offers the new version
+SAMPLE_VERSION = 19  # bump when the sample changes, so the editor offers the new version
 OUT = os.path.join(HERE, 'fog-of-war.json')
 JOBS = os.path.join(HERE, 'export-jobs.json')  # what export.html?jobs=diagrams/fog-of-war/export-jobs.json renders
 
@@ -420,7 +420,7 @@ RAIL_FRAC = 0.62  # the context rail's height within the gap between boards and 
 MOVE_GAP = 20    # space between a move arrow and the boards it joins
 MOVE_ICON = 80   # size of the moved piece drawn above a White move arrow
 BRACE_W, BRACE_H = 460, 40   # the brace under each hidden move, where its possible moves will go
-BRACE_GAP = 130              # from the bottom of the real-position boards to the braces (room for label 4)
+BRACE_GAP = 190              # from the bottom of the real-position boards to the braces (room for label 4)
 POSSIBLE_SPACE = 18 + 72 + 4 + 22 + 64 + (3 * 176 + 2 * 14 + 2 * 10) + 40 + 60  # moves, then the beam and its bubble
 MOVE_PIECE = {'1. e4': 'P', '2. Nc3': 'N', '3. Bb5': 'B', '4. Bxe8': 'B'}  # the White piece that moved
 HEAD_W = {'1…': 33.1, '2…': 37.9, '3…': 37.7}  # measured Inter Semi Bold 24px widths
@@ -430,6 +430,7 @@ REAL_LABELS = ['Real position: start', 'Real position after 1. e4', 'Real positi
 SEQ_X, SEQ_Y = 1000, 200
 
 
+LABEL3_MOVE = '2. Nc3'  # the White move that label 3 hangs off
 VIEW_BOARDS = 5  # boards shown in White's view: start, 1. e4, 1…, 2. Nc3, 2…  (two hidden moves)
 
 
@@ -508,8 +509,8 @@ def sequence_section(title, intro, move_line, texts, fogged, prefix, boards=8):
             if k == 1:
                 # The first beam sits in a thought bubble, thought by a robot on its right.
                 parts.append(thinking(gcx - BEAM_W / 2 - BEAM_PAD, tb_y - BEAM_PAD, BEAM_W + 2 * BEAM_PAD, BEAM_H, beam))
-                # Label 4, beside the grey arrow and just above the brace.
-                parts.append(text('Label 4', gcx + 16, by_ - 74, '4. Sampling of candidate histories', 32, 600, GREY))
+                # Label 4, beside the grey arrow, centred in the space between the blue boards and the brace.
+                parts.append(text('Label 4', gcx + 16, by_ - 113, '4. Sampling of candidate histories', 44, 600, GREY))
             else:
                 parts.append(beam)
             kids.append(group(f'Hidden move {labels[k]}', parts))
@@ -520,7 +521,17 @@ def sequence_section(title, intro, move_line, texts, fogged, prefix, boards=8):
         size = MOVE_ICON
         pc = piece('w', MOVE_PIECE[labels[k]], labels[k], mid_x - size / 2, mid_y - 16 - size, size)
         pc['name'] = f'Moved piece ({labels[k]})'
-        kids.append(group(f'Move {labels[k]}', [a, pc]))
+        parts = [a, pc]
+        if fogged and labels[k] == LABEL3_MOVE:
+            # Label 3 hangs off this move by a line, in the open space under the boards (like label 2),
+            # centred between the two columns' teal lines.
+            lw = BW + gap - 80
+            l3 = text('Label 3', mid_x - lw / 2, SEQ_Y + top + 44 + BW + 26,
+                      '3. Policy and Value function learned through RL self-play', 32, 600, CHAR, w=lw, align='center')
+            parts += [l3, {'id': nid('c'), 'type': 'CONNECTOR', 'name': 'Label 3 line',
+                           'from': {'id': a['id'], 'side': 'CENTER'}, 'to': {'id': l3['id'], 'side': 'TOP'},
+                           'gap': [20, 10], 'stroke': CHAR, 'strokeWidth': 3, 'arrow': False}]
+        kids.append(group(f'Move {labels[k]}', parts))
     if fogged:
         kids.append(group('Next-state predictions', [prediction_arc(board_ids[k], board_ids[k + 1], k) for k in range(n - 1)]))
         kids.append(section_labels(top))
@@ -670,7 +681,8 @@ def thinking(bx, by, cw, ch, content):
 
 
 def section_labels(top):
-    """Labels 1 to 3, each in the colour of what it names, placed in space kept free for them."""
+    """Labels 1 and 2, each in the colour of what it names, placed in space kept free for them.
+    Label 3 hangs off its move arrow and label 4 off its hidden-move arrow; both are drawn with them."""
     col = lambda k: SEQ_X + PAD + k * (BW + GAP)
     board_top = SEQ_Y + top + 44
     nodes = []
@@ -686,10 +698,6 @@ def section_labels(top):
     c0, c1 = col(0) + BW / 2, col(1) + BW / 2
     nodes.append(text('Label 2', c0 + 40, board_top + BW + 26, '2. Aligning representations with underlying state', 32, 600,
                       CONTEXT, w=c1 - c0 - 80, align='center'))
-    # 3. Under the 2. Nc3 move arrow, wrapped to the gap between the boards with a margin each side.
-    gx = col(2) + BW
-    nodes.append(text('Label 3', gx + 20, board_top + BW / 2 + 30, '3. Policy and Value function learned through RL self-play',
-                      26, 600, CHAR, w=GAP - 40, align='center', lineHeight=1.25))
     return group('Labels', nodes)
 
 

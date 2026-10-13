@@ -60,7 +60,7 @@ This page has one column per position. White's view shows five positions: the st
 - **Move arrows between boards.**
   - A White move is a solid charcoal arrow. It has the move written on the line and the moved piece, at 80 px, above it.
   - A hidden Black move is a dashed grey arrow with no label.
-- **Label 3.** It sits under the 2. Nc3 arrow.
+- **Label 3.** A charcoal line drops from the middle of the 2. Nc3 arrow to label 3, which sits under the boards, between that gap's two teal lines.
 - **The embedding.** A teal arrow runs from each board down to its embedding vector: 16 cells between brackets, blue for negative values and orange for positive ones.
 - **The context rail.** Each column's line branches right into a shared rail, with rounded corners. The rail merges into every later column's line, so each embedding draws on all earlier states. Label 2 sits just above the rail, between the first two columns.
 - **The real position.** Under each vector is a blue-and-black board showing where every piece really stood. It has no title.
@@ -92,8 +92,8 @@ All eight positions of the game appear on classic boards with no fog. Yellow squ
 | --- | --- | --- |
 | 1. Next observation prediction | 38 px | Above a thin bracket spanning the first three arcs |
 | 2. Aligning representations with underlying state | 32 px | Below the boards and above the rail, first two columns, on two lines |
-| 3. Policy and Value function learned through RL self-play | 26 px | Under the 2. Nc3 arrow, on four lines inside the gap between the boards |
-| 4. Sampling of candidate histories | 32 px | Beside the first grey dashed arrow, above its brace |
+| 3. Policy and Value function learned through RL self-play | 32 px | Under the boards, hanging by a line from the 2. Nc3 arrow, on two lines |
+| 4. Sampling of candidate histories | 44 px | Beside the first grey dashed arrow, centred between the blue boards and its brace |
 
 Each label takes the colour of what it names and sits in space kept free for it. When a label grows, widen the gaps around it; don't let it overlap anything.
 
@@ -102,7 +102,7 @@ Each label takes the colour of what it names and sits in space kept free for it.
 | Constant | Controls |
 | --- | --- |
 | `VIEW_BOARDS` | How many positions White's view shows |
-| `GAP` | Space between boards on White's view, wide enough for label 3 |
+| `GAP` | Space between boards on White's view |
 | `REAL_PAGE_GAP` | Space between boards on the Real positions page, kept apart from `GAP` so that page doesn't move when White's view does |
 | `FOG_TOP` | How far down White's boards sit, leaving room for the arcs and label 1 |
 | `EMB_GAP`, `RAIL_FRAC` | The drop from a board to its vector, and where the rail runs within it |
@@ -110,6 +110,7 @@ Each label takes the colour of what it names and sits in space kept free for it.
 | `BRACE_GAP` | The space above the braces, for label 4 |
 | `MOVE_ICON` | The size of the piece above White's move arrows |
 | `WRONG_CHOICE` | Hidden moves where the model samples the wrong move |
+| `LABEL3_MOVE` | The White move that label 3 hangs off |
 
 Both pages come from `sequence_section`, so a shared constant moves both. After a change, the exports of the page you didn't touch should be unchanged.
 
