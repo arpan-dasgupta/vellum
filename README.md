@@ -1,14 +1,14 @@
 # Vellum
 
-![Vellum: a sketched annotation above the change Claude made from it](docs/cover.png)
+![Vellum: a sketched annotation above the change an agent made from it](docs/cover.png)
 
-Vellum is a small vector editor that runs in the browser: three files, no build step and no dependencies. You draw diagrams, export them as SVG or PNG, and mark them up with sketches and notes that Claude reads and works through.
+Vellum is a small vector editor that runs in the browser: three files, no build step and no dependencies. You draw diagrams, export them as SVG or PNG, and mark them up with sketches and notes that an agent reads and works through.
 
 ## Features
 
 - **Diagrams.** Rectangles, ellipses, text, vector paths, images and connector arrows, organised in pages, layers, groups and sections.
 - **Annotations.** Sketch what you want, point with arrows, highlight layers and leave notes, all in their own layer. Each annotation is a small thread you can reply to and resolve.
-- **Readable by Claude.** Each annotation carries a plain-language description of what it points at, so Claude knows what a mark refers to.
+- **Readable by agents.** Synced annotations carry a plain-language description of what each one points at, so an agent knows what a mark refers to.
 - **Export.** Export a selection or a whole page as SVG, with the Inter font embedded, or as PNG. A batch exporter renders many at once.
 - **Plain JSON documents.** They are easy to generate from a script and easy to diff.
 
@@ -22,15 +22,19 @@ python3 tools/devserver.py 8765
 
 Then open http://127.0.0.1:8765. Python 3 is the only requirement.
 
-## Working with Claude
+## Working with an agent
 
 1. **Mark up the diagram.** Sketch what you want with the pen (P), point with arrows (A) and highlights (M), and write instructions in notes (N).
-2. **Ask Claude to work on the annotations.** Claude looks at each one on its own, as an image, and makes the change. Then it replies on the annotation and resolves it.
-3. **Answer questions on the annotation.** If something is unclear, Claude asks there and leaves the annotation open. Reply on it to continue.
+2. **Ask your agent to work on the annotations.** The agent looks at each annotation on its own, as an image, and makes the change. Then it replies on the annotation and resolves it.
+3. **Answer questions on the annotation.** If something is unclear, the agent asks there and leaves the annotation open. Reply on it to continue.
 
-Annotations reach Claude when Vellum is published as a Claude artifact: they sync to the artifact's database, where Claude reads them and replies. Run locally, they stay in the browser's autosave and in saved files. [CLAUDE.md](CLAUDE.md) is the guide Claude follows.
+Annotations are saved inside the document's JSON, so any agent that can read files can work on them.
 
-The cover shows a real round. The note and red sketch asked for a three-sided rail with rounded corners instead of tilted arrows. The panel below shows what Claude built.
+The full loop of syncing, replies and resolving runs when Vellum is published as a Claude artifact. There, annotations sync to the artifact's database with their plain-language descriptions, and Claude reads them, replies and resolves them.
+
+[CLAUDE.md](CLAUDE.md) is the step-by-step guide. It is written for Claude Code, but the steps carry over to other agents.
+
+The cover shows a real round. The note and red sketch asked for a three-sided rail with rounded corners instead of tilted arrows. The panel below shows what the agent built.
 
 ## Example: Fog of War
 

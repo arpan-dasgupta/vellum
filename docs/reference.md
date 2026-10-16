@@ -1,6 +1,6 @@
 # Vellum reference
 
-The details behind the [README](../README.md): shortcuts, the annotation tools, the document format, batch export and the annotation data Claude reads.
+The details behind the [README](../README.md): shortcuts, the annotation tools, the document format, batch export and the annotation data an agent reads.
 
 ## Keyboard shortcuts
 
